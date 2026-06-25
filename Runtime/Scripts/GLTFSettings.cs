@@ -152,6 +152,13 @@ namespace UnityGLTF
 		private bool useTextureFileTypeHeuristic = true;
 		[SerializeField] [Tooltip("Quality setting for exported JPEG files.")]
 		private int defaultJpegQuality = 90;
+		[SerializeField]
+		[Range(0.01f, 1f)]
+		[Tooltip("Uniformly scales the resolution of exported textures. 1 = full size, 0.5 = half, 0.25 = quarter. Handy to quickly shrink GLB size. Source assets are never modified; the scale is applied only while exporting (GLB / internal-buffer export).")]
+		private float exportTextureScale = 1f;
+		[SerializeField]
+		[Tooltip("Optional hard cap on the largest exported texture dimension, in pixels. 0 = no cap. Applied after the scale and preserves aspect ratio.")]
+		private int exportMaxTextureSize = 0;
 
 		[Header("Export Animation")]
 		[SerializeField]
@@ -188,6 +195,8 @@ namespace UnityGLTF
 		public bool UseTextureFileTypeHeuristic { get => useTextureFileTypeHeuristic; set => useTextureFileTypeHeuristic = value; }
 		public bool ExportVertexColors { get => exportVertexColors; set => exportVertexColors = value; }
 		public int DefaultJpegQuality { get => defaultJpegQuality; set => defaultJpegQuality = value; }
+		public float ExportTextureScale { get => exportTextureScale; set => exportTextureScale = value; }
+		public int ExportMaxTextureSize { get => exportMaxTextureSize; set => exportMaxTextureSize = value; }
 		public bool ExportDisabledGameObjects { get => exportDisabledGameObjects; set => exportDisabledGameObjects = value; }
 		public bool ExportAnimations { get => exportAnimations; set => exportAnimations = value; }
 		public bool BakeAnimationSpeed { get => bakeAnimationSpeed; set => bakeAnimationSpeed = value; }

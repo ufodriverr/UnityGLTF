@@ -215,6 +215,11 @@ namespace UnityGLTF
 				new UniqueTexture(textureObj, exportSettings) :
 				new UniqueTexture(textureObj, textureSlot, this);
 
+			// Apply the global export resolution downscale / cap (see GLTFSettings.ExportTextureScale).
+			uniqueTexture.Scale = Mathf.Clamp(settings.ExportTextureScale, 0.01f, 1f);
+			if (settings.ExportMaxTextureSize > 0)
+				uniqueTexture.MaxSize = settings.ExportMaxTextureSize;
+
 			foreach (var plugin in _plugins)
 				plugin?.BeforeTextureExport(this, ref uniqueTexture, textureSlot);
 
@@ -549,7 +554,8 @@ namespace UnityGLTF
 			bool wasAbleToExport = false;
 			bool textureHasAlpha = true;
 
-			if (settings.TryExportTexturesFromDisk && CanGetTextureDataFromDisk(exportSettings, texture, out string path))
+			// When a downscale is requested we must re-encode (the raw on-disk bytes are full resolution).
+			if (settings.TryExportTexturesFromDisk && !uniqueTexture.IsScaled() && CanGetTextureDataFromDisk(exportSettings, texture, out string path))
 			{
 				if (IsPng(path))
 				{

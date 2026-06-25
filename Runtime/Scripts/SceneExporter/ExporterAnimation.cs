@@ -128,14 +128,29 @@ namespace UnityGLTF
 			foreach (var layer in animatorController.layers)
 			{
 				if (!layer.stateMachine) continue;
-				foreach (var state in layer.stateMachine.states)
+				// Recurse into sub-state-machines so nested states (and their speeds) are also matched.
+				foreach (var state in GetStatesRecursive(layer.stateMachine))
 				{
 					// find a matching clip in the animator
-					if (state.state.motion is AnimationClip c && c == clip)
+					if (state.motion is AnimationClip c && c == clip)
 					{
-						yield return state.state;
+						yield return state;
 					}
 				}
+			}
+		}
+
+		// Returns all AnimatorStates of a state machine, including those nested in sub-state-machines.
+		private static IEnumerable<AnimatorState> GetStatesRecursive(AnimatorStateMachine stateMachine)
+		{
+			if (!stateMachine) yield break;
+			foreach (var child in stateMachine.states)
+				yield return child.state;
+			foreach (var childMachine in stateMachine.stateMachines)
+			{
+				if (!childMachine.stateMachine) continue;
+				foreach (var state in GetStatesRecursive(childMachine.stateMachine))
+					yield return state;
 			}
 		}
 
@@ -207,8 +222,10 @@ namespace UnityGLTF
 
 					// special case: there could be multiple states with the same animation clip.
 					// if we want to handle this here, we need to find all states that match this clip
+					var exportedForAnyState = false;
 					foreach(var state in GetAnimatorStateParametersForClip(clips[i], animatorController))
 					{
+						exportedForAnyState = true;
 						var speed = 1f;
 						if (settings.BakeAnimationSpeed)
 						{
@@ -217,6 +234,11 @@ namespace UnityGLTF
 						var name = clips[i].name;
 						ExportAnimationClip(clips[i], name, nodeTransform, speed);
 					}
+
+					// Clips that aren't used directly by a state (e.g. members of a BlendTree) are still
+					// referenced by the animator controller, so they need to be baked too. Export once at default speed.
+					if (!exportedForAnyState)
+						ExportAnimationClip(clips[i], clips[i].name, nodeTransform, 1f);
 				}
 			}
 			else

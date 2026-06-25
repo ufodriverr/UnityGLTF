@@ -4,6 +4,11 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+- add: texture export downscale - `Export Texture Scale` (1 / 0.5 / 0.25 …) and optional `Export Max Texture Size` cap in Project Settings ▸ UnityGLTF ▸ Export. Applied to GLB export (aspect-ratio preserving); source assets untouched.
+- add: `IMMERSION_animator_controller` export plugin (enabled by default) - writes the full Unity AnimatorController state machine (parameters, layers, states, transitions, conditions, blend trees and transition timings) into a root glTF extension next to the baked animations. See `Documentation~/IMMERSION_animator_controller.md`.
+- fix: AnimatorController export now also bakes clips that are only referenced by BlendTrees or nested sub-state-machines (previously skipped)
+
 ## [2.19.5] - 2026-04-29
 - fix: compiler error in Unity 6.3 > wrong ifdef
 
