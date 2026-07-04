@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
+using UnityEngine.Rendering;
 
 namespace UnityGLTF.Plugins
 {
@@ -21,7 +22,7 @@ namespace UnityGLTF.Plugins
 		// The exporter holds references to these textures until the output file is written, and
 		// there is no plugin callback after that point — so they're kept alive here and destroyed
 		// at the start of the next export (see ReleaseTexturesFromPreviousExports).
-		private static readonly List<Texture2D> _exportedTextures = new List<Texture2D>();
+		private static readonly HashSet<Texture2D> _exportedTextures = new HashSet<Texture2D>();
 
 		/// <summary>Destroys the temporary LDR textures created during previous exports.</summary>
 		public static void ReleaseTexturesFromPreviousExports()
@@ -66,6 +67,38 @@ namespace UnityGLTF.Plugins
 			}
 		}
 
+		private static Material _cubemapToFacesMaterial;
+		private static Material CubemapToFacesMaterial
+		{
+			get
+			{
+				if (!_cubemapToFacesMaterial)
+					_cubemapToFacesMaterial = LoadBlitMaterial("UnityGLTFCubemapToFaces");
+				return _cubemapToFacesMaterial;
+			}
+		}
+
+		/// <summary>True for textures created by these helpers during the current export.</summary>
+		public static bool IsLightingTexture(Texture texture)
+		{
+			return texture is Texture2D tex2D && _exportedTextures.Contains(tex2D);
+		}
+
+		/// <summary>
+		/// Applies the global ExportTextureScale / ExportMaxTextureSize to a dimension pair, same
+		/// math as UniqueTexture.ScaledDimension. Lighting textures are pre-scaled with this (and
+		/// then excluded from the exporter's own scaling), so the sidecar PNGs match the GLB.
+		/// </summary>
+		public static Vector2Int ScaledSize(int width, int height, GLTFSettings settings)
+		{
+			var factor = Mathf.Clamp(settings.ExportTextureScale, 0.01f, 1f);
+			var maxDimension = Mathf.Max(width, height);
+			var maxSize = settings.ExportMaxTextureSize;
+			if (maxSize > 0 && maxDimension * factor > maxSize)
+				factor = maxSize / (float)maxDimension;
+			return new Vector2Int(Mathf.Max(1, Mathf.RoundToInt(width * factor)), Mathf.Max(1, Mathf.RoundToInt(height * factor)));
+		}
+
 		/// <summary>Texture export settings that force PNG output (alpha kept), sRGB, no channel conversion.</summary>
 		public static GLTFSceneExporter.TextureExportSettings PngExportSettings
 		{
@@ -84,7 +117,7 @@ namespace UnityGLTF.Plugins
 		/// Decodes a baked lightmap (raw HDR like BC6H/half-float, or RGBM-encoded) to a clamped
 		/// LDR sRGB Texture2D, ready for PNG export.
 		/// </summary>
-		public static Texture2D DecodeLightmapToLDR(Texture2D lightmap, string name)
+		public static Texture2D DecodeLightmapToLDR(Texture2D lightmap, string name, GLTFSettings settings)
 		{
 			var mat = LightmapDecodeMaterial;
 			if (!mat) return null;
@@ -98,7 +131,8 @@ namespace UnityGLTF.Plugins
 			mat.SetVector("_Decode", isRgbm
 				? (linearSpace ? new Vector4(34.493242f, 2.2f, 0f, 0f) : new Vector4(5f, 1f, 0f, 0f))   // pow(5, 2.2)
 				: (linearSpace ? new Vector4(4.59479f, 1f, 0f, 0f) : new Vector4(2f, 1f, 0f, 0f)));     // pow(2, 2.2)
-			return BlitToSRGBTexture(lightmap, lightmap.width, lightmap.height, mat, name, TextureWrapMode.Clamp);
+			var size = ScaledSize(lightmap.width, lightmap.height, settings);
+			return BlitToSRGBTexture(lightmap, size.x, size.y, mat, name, TextureWrapMode.Clamp);
 		}
 
 		/// <summary>
@@ -117,6 +151,64 @@ namespace UnityGLTF.Plugins
 			// poles into each other under bilinear/PMREM filtering. The cost is a minor seam at
 			// the anti-meridian.
 			return BlitToSRGBTexture(Texture2D.whiteTexture, width, Mathf.Max(1, width / 2), mat, name, TextureWrapMode.Clamp);
+		}
+
+		/// <summary>
+		/// Flattens a cubemap into a horizontal 6x1 face strip (+X,-X,+Y,-Y,+Z,-Z, WebGL/three.js
+		/// CubeTexture orientation) as a clamped LDR sRGB Texture2D — the format the Immersion web
+		/// editor's reflection loader expects (width = 6 x height, square faces).
+		/// </summary>
+		public static Texture2D CubemapToFaceAtlas(Texture cubemap, Vector4 hdrDecodeValues, int faceSize, string name)
+		{
+			var mat = CubemapToFacesMaterial;
+			if (!mat) return null;
+			mat.SetTexture("_CubeTex", cubemap);
+			mat.SetVector("_Decode", hdrDecodeValues);
+			mat.SetFloat("_UseDecode", 1f);
+			faceSize = Mathf.Max(4, faceSize);
+			return BlitToSRGBTexture(Texture2D.whiteTexture, faceSize * 6, faceSize, mat, name, TextureWrapMode.Clamp);
+		}
+
+		/// <summary>
+		/// Renders the scene skybox (any type: 6-sided, cubemap, procedural) into a temporary HDR
+		/// cubemap RenderTexture via a throwaway camera. Caller must Release + destroy the result.
+		/// Returns null if there is no skybox or the bake fails (e.g. some SRP setups).
+		/// </summary>
+		public static RenderTexture BakeSkyboxToCubemap(int faceSize)
+		{
+			if (!RenderSettings.skybox) return null;
+
+			var cubeRT = new RenderTexture(faceSize, faceSize, 16, RenderTextureFormat.ARGBHalf)
+			{
+				dimension = TextureDimension.Cube,
+				hideFlags = HideFlags.HideAndDontSave,
+			};
+
+			var go = new GameObject("UnityGLTF Skybox Capture") { hideFlags = HideFlags.HideAndDontSave };
+			try
+			{
+				var cam = go.AddComponent<Camera>();
+				cam.enabled = false;
+				cam.clearFlags = CameraClearFlags.Skybox;
+				cam.cullingMask = 0; // skybox only, no scene geometry
+				cam.allowHDR = true;
+				cam.nearClipPlane = 0.1f;
+				cam.farClipPlane = 100f;
+				cam.transform.position = Vector3.zero;
+
+				if (!cam.RenderToCubemap(cubeRT))
+				{
+					Debug.LogWarning("UnityGLTF: could not bake the skybox to a cubemap; skybox export skipped.");
+					cubeRT.Release();
+					Object.DestroyImmediate(cubeRT);
+					return null;
+				}
+				return cubeRT;
+			}
+			finally
+			{
+				Object.DestroyImmediate(go);
+			}
 		}
 
 		private static Texture2D BlitToSRGBTexture(Texture source, int width, int height, Material material, string name, TextureWrapMode wrapMode)

@@ -393,6 +393,12 @@ namespace UnityGLTF
 			public string uniqueFileName;
 		}
 
+		private struct SidecarFileInfo
+		{
+			public string fileName;
+			public byte[] data;
+		}
+
 		public struct ExportFileResult
 		{
 			public string uri;
@@ -409,6 +415,7 @@ namespace UnityGLTF
 		private List<ImageInfo> _imageInfos;
 		private HashSet<string> _imageExportPaths;
 		private List<FileInfo> _fileInfos;
+		private List<SidecarFileInfo> _sidecarFiles;
 		private HashSet<string> _fileNames;
 		private List<UniqueTexture> _textures;
 		private Dictionary<int, int> _exportedMaterials;
@@ -705,6 +712,7 @@ namespace UnityGLTF
 
 			_imageInfos = new List<ImageInfo>();
 			_fileInfos = new List<FileInfo>();
+			_sidecarFiles = new List<SidecarFileInfo>();
 			_fileNames = new HashSet<string>();
 			_exportedMaterials = new Dictionary<int, int>();
 			_textures = new List<UniqueTexture>();
@@ -763,6 +771,8 @@ namespace UnityGLTF
 				ExportImages(path);
 				ExportFiles(path);
 			}
+
+			WriteSidecarFiles(path, Path.GetFileNameWithoutExtension(fullPath));
 		}
 
 		/// <summary>
@@ -960,8 +970,10 @@ namespace UnityGLTF
 
 			if (exportTextures)
 				ExportImages(path);
-				
+
 			ExportFiles(path);
+			// fileName was already reduced to the extension-free base name above
+			WriteSidecarFiles(path, fileName);
 
 			gltfWriteOutMarker.End();
 			exportGltfMarker.End();
@@ -1355,6 +1367,54 @@ namespace UnityGLTF
 				return new ExportFileResult {
 					uri = uniqueFileName,
 				};
+			}
+		}
+
+		/// <summary>
+		/// Token that can be used in sidecar file names; it is replaced with the export's base
+		/// file name (without extension) when the files are written.
+		/// </summary>
+		public const string SidecarNameToken = "{name}";
+
+		/// <summary>
+		/// Registers a loose file to be written next to the exported .glb/.gltf — unlike
+		/// <see cref="ExportFile"/>, the data is NOT embedded into the GLB buffer, so this works
+		/// for sidecar data an external tool should read without parsing the glTF (e.g. the
+		/// IMMERSION lighting PNGs + JSON). Registering the same file name again replaces the
+		/// previous content. Only written by <see cref="SaveGLB"/> / <see cref="SaveGLTFandBin"/>
+		/// (stream-based exports have no output folder).
+		/// </summary>
+		public void AddSidecarFile(string fileName, byte[] data)
+		{
+			if (string.IsNullOrEmpty(fileName) || data == null) return;
+			if (Path.IsPathRooted(fileName) || fileName.Contains(".."))
+			{
+				Debug.Log(LogType.Error, "Sidecar file names must be relative to the export folder: " + fileName);
+				return;
+			}
+			for (int i = 0; i < _sidecarFiles.Count; i++)
+			{
+				if (_sidecarFiles[i].fileName == fileName)
+				{
+					_sidecarFiles[i] = new SidecarFileInfo { fileName = fileName, data = data };
+					return;
+				}
+			}
+			_sidecarFiles.Add(new SidecarFileInfo { fileName = fileName, data = data });
+		}
+
+		private void WriteSidecarFiles(string outputPath, string baseName)
+		{
+			foreach (var file in _sidecarFiles)
+			{
+				var fileName = file.fileName.Replace(SidecarNameToken, baseName);
+				var fileOutputPath = Path.Combine(outputPath, fileName);
+
+				var dir = Path.GetDirectoryName(fileOutputPath);
+				if (!Directory.Exists(dir) && dir != null)
+					Directory.CreateDirectory(dir);
+
+				File.WriteAllBytes(fileOutputPath, file.data);
 			}
 		}
 

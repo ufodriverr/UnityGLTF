@@ -5,10 +5,12 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-- add: `IMMERSION_lightmaps` export plugin (enabled by default) - exports baked lightmaps as PNG (HDR/RGBM decoded to LDR) plus per-node lightmap index and UV tiling (`IMMERSION_lightmap` node extension). See `Documentation~/IMMERSION_lighting.md`.
-- add: `IMMERSION_reflection_probes` export plugin (enabled by default) - exports ReflectionProbe cubemaps as equirectangular PNG panoramas plus probe metadata (box projection, intensity, blend distance) on the probe's node.
-- add: `IMMERSION_scene_settings` export plugin (enabled by default) - exports the skybox (baked to an equirectangular PNG), ambient lighting and fog settings as a root extension.
-- note: all lighting textures go through the regular texture pipeline, so `Export Texture Scale` / `Export Max Texture Size` apply to them too (GLB export, same as regular textures).
+- add: `IMMERSION_lightmaps` export plugin (enabled by default) - writes baked lightmaps as sidecar `Lightmap-<i>.png` files (HDR/RGBM decoded to LDR) plus `<name>_lightmap_offsets.json` in the Immersion web editor schema next to the exported file, and adds `IMMERSION_lightmap`/`IMMERSION_lightmaps` extensions to the glTF. See `Documentation~/IMMERSION_lighting.md`.
+- add: `IMMERSION_reflection_probes` export plugin (enabled by default) - writes the main ReflectionProbe (or the skybox as fallback) as a sidecar `<name>_reflection.png` 6x1 cube-face atlas (Immersion web editor format), plus `IMMERSION_reflection_probe` metadata extensions on probe nodes.
+- add: `IMMERSION_scene_settings` export plugin (enabled by default) - exports ambient lighting and fog as a root extension; optionally embeds the skybox as an equirectangular texture.
+- add: `GLTFSceneExporter.AddSidecarFile` API - plugins can register loose files that are written next to the exported .glb/.gltf.
+- note: the global `Export Texture Scale` / `Export Max Texture Size` settings are applied to the lighting sidecar PNGs (per cube face for the reflection atlas).
+- fix: added missing .meta files for the IMMERSION plugin scripts - without them Unity silently ignores the files when the package is installed from a git URL ("immutable folder" warning).
 - add: texture export downscale - `Export Texture Scale` (1 / 0.5 / 0.25 …) and optional `Export Max Texture Size` cap in Project Settings ▸ UnityGLTF ▸ Export. Applied to GLB export (aspect-ratio preserving); source assets untouched.
 - add: `IMMERSION_animator_controller` export plugin (enabled by default) - writes the full Unity AnimatorController state machine (parameters, layers, states, transitions, conditions, blend trees and transition timings) into a root glTF extension next to the baked animations. See `Documentation~/IMMERSION_animator_controller.md`.
 - fix: AnimatorController export now also bakes clips that are only referenced by BlendTrees or nested sub-state-machines (previously skipped)
