@@ -303,6 +303,10 @@ namespace UnityGLTF
 				var mainTex = materialObj.GetTexture("_BaseMap");
 				material.PbrMetallicRoughness = new PbrMetallicRoughness()
 				{
+					// unknown custom shader: assume non-metallic, otherwise the glTF defaults
+					// (metallic = 1) make the material render like dark metal in viewers
+					MetallicFactor = 0,
+					RoughnessFactor = 1.0f,
 					BaseColorFactor = (materialObj.HasProperty("_BaseColor")
 						? materialObj.GetColor("_BaseColor")
 						: Color.white).ToNumericsColorLinear(),
@@ -315,6 +319,8 @@ namespace UnityGLTF
 				var mainTex = materialObj.GetTexture("_ColorTexture");
 				material.PbrMetallicRoughness = new PbrMetallicRoughness()
 				{
+					MetallicFactor = 0,
+					RoughnessFactor = 1.0f,
 					BaseColorFactor = (materialObj.HasProperty("_BaseColor")
 						? materialObj.GetColor("_BaseColor")
 						: Color.white).ToNumericsColorLinear(),
@@ -1023,6 +1029,17 @@ namespace UnityGLTF
 				glossinessFactor,
 				specularGlossinessTexture
 			);
+
+			// Fallback for viewers without KHR_materials_pbrSpecularGlossiness support (e.g.
+			// current three.js): approximate as a non-metallic material with roughness derived
+			// from glossiness. Without this, such viewers use the glTF defaults (metallic = 1,
+			// roughness = 1) and the material renders like dark rough metal.
+			if (material.PbrMetallicRoughness == null)
+				material.PbrMetallicRoughness = new PbrMetallicRoughness();
+			material.PbrMetallicRoughness.MetallicFactor = 0;
+			material.PbrMetallicRoughness.RoughnessFactor = 1.0 - glossinessFactor;
+			material.PbrMetallicRoughness.BaseColorFactor = diffuseFactor;
+			material.PbrMetallicRoughness.BaseColorTexture = diffuseTexture;
 		}
 
 		private MaterialCommonConstant ExportCommonConstant(Material materialObj)
