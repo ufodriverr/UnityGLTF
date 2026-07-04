@@ -397,6 +397,8 @@ namespace UnityGLTF
 		{
 			public string fileName;
 			public byte[] data;
+			// when set, SidecarNameToken is also replaced inside the (UTF-8 text) file content
+			public bool replaceTokenInContent;
 		}
 
 		public struct ExportFileResult
@@ -1384,7 +1386,7 @@ namespace UnityGLTF
 		/// previous content. Only written by <see cref="SaveGLB"/> / <see cref="SaveGLTFandBin"/>
 		/// (stream-based exports have no output folder).
 		/// </summary>
-		public void AddSidecarFile(string fileName, byte[] data)
+		public void AddSidecarFile(string fileName, byte[] data, bool replaceTokenInContent = false)
 		{
 			if (string.IsNullOrEmpty(fileName) || data == null) return;
 			if (Path.IsPathRooted(fileName) || fileName.Contains(".."))
@@ -1392,15 +1394,16 @@ namespace UnityGLTF
 				Debug.Log(LogType.Error, "Sidecar file names must be relative to the export folder: " + fileName);
 				return;
 			}
+			var info = new SidecarFileInfo { fileName = fileName, data = data, replaceTokenInContent = replaceTokenInContent };
 			for (int i = 0; i < _sidecarFiles.Count; i++)
 			{
 				if (_sidecarFiles[i].fileName == fileName)
 				{
-					_sidecarFiles[i] = new SidecarFileInfo { fileName = fileName, data = data };
+					_sidecarFiles[i] = info;
 					return;
 				}
 			}
-			_sidecarFiles.Add(new SidecarFileInfo { fileName = fileName, data = data });
+			_sidecarFiles.Add(info);
 		}
 
 		private void WriteSidecarFiles(string outputPath, string baseName)
@@ -1414,7 +1417,13 @@ namespace UnityGLTF
 				if (!Directory.Exists(dir) && dir != null)
 					Directory.CreateDirectory(dir);
 
-				File.WriteAllBytes(fileOutputPath, file.data);
+				var data = file.data;
+				// text sidecars (e.g. the lightmap offsets JSON) can reference other sidecar
+				// files by their token names; resolve those to the actual export name too
+				if (file.replaceTokenInContent)
+					data = System.Text.Encoding.UTF8.GetBytes(System.Text.Encoding.UTF8.GetString(data).Replace(SidecarNameToken, baseName));
+
+				File.WriteAllBytes(fileOutputPath, data);
 			}
 		}
 

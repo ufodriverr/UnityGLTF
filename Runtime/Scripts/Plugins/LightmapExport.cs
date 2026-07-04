@@ -124,14 +124,18 @@ namespace UnityGLTF.Plugins
 				var ldr = LightingExportUtils.DecodeLightmapToLDR(lightmaps[index].lightmapColor, baseName, _context.settings);
 				if (ldr == null) continue;
 
-				var fileName = baseName + ".png";
+				// prefix with the export name so lightmaps from different scenes can coexist in
+				// the same folder / asset store (e.g. "Bank_Lightmap-0.png")
+				var fileBase = GLTFSceneExporter.SidecarNameToken + "_" + baseName;
+				var fileName = fileBase + ".png";
 				exporter.AddSidecarFile(fileName, ldr.EncodeToPNG());
 				fileNames[index] = fileName;
 				manifestLightmaps.Add(new JObject
 				{
-					// the editor matches colorName against uploaded file names (case-insensitive, no extension)
+					// the editor matches colorName against uploaded file names (case-insensitive,
+					// no extension); the {name} token is resolved when the manifest is written
 					["index"] = index,
-					["colorName"] = baseName,
+					["colorName"] = fileBase,
 				});
 
 				var entry = new JObject { ["lightmapIndex"] = index, ["image"] = fileName };
@@ -173,7 +177,7 @@ namespace UnityGLTF.Plugins
 				["renderers"] = renderers,
 			};
 			exporter.AddSidecarFile(GLTFSceneExporter.SidecarNameToken + "_lightmap_offsets.json",
-				Encoding.UTF8.GetBytes(manifest.ToString()));
+				Encoding.UTF8.GetBytes(manifest.ToString()), replaceTokenInContent: true);
 
 			// glTF extensions with the same data (node extension + root list)
 			foreach (var entry in _nodes)

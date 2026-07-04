@@ -9,11 +9,14 @@ editor loads loose PNGs + JSON, not data embedded inside a GLB:
 
 ```
 Bank.glb
-Lightmap-0.png                  one per baked lightmap page (LDR sRGB)
-Lightmap-1.png
+Bank_Lightmap-0.png             one per baked lightmap page (LDR sRGB)
+Bank_Lightmap-1.png
 Bank_lightmap_offsets.json      lightmap manifest (web editor schema)
 Bank_reflection.png             6x1 cube-face atlas (main probe, or skybox fallback)
 ```
+
+All sidecar names are prefixed with the export's base name, so several scenes can coexist in
+the same folder or asset store.
 
 Upload these to the editor's project assets together with the GLB; Scene Settings ▸ Load picks
 them up by name (`{scene}_lightmap_offsets.json`, `colorName` matching for lightmap pages,
@@ -46,7 +49,7 @@ intensity above 1.0 is clamped.
 ```json
 {
   "lightmaps": [
-    { "index": 0, "colorName": "Lightmap-0" }
+    { "index": 0, "colorName": "Bank_Lightmap-0" }
   ],
   "renderers": [
     {
@@ -72,12 +75,16 @@ The glTF node extension `IMMERSION_lightmap` carries the same data in-file:
 ```json
 {
   "lightmapIndex": 0,
-  "image": "Lightmap-0.png",
+  "image": "{name}_Lightmap-0.png",
   "scaleOffset": [sx, sy, ox, oy],
   "scaleOffsetGltf": [sx, sy, ox, oy],
   "texture": 3
 }
 ```
+
+(In extension payloads `{name}` stays literal — extensions are serialized into the glTF before
+the output file name is known; substitute the export's base name when resolving. Sidecar file
+names and the offsets JSON have it already resolved.)
 
 (`scaleOffsetGltf` is pre-converted for glTF TEXCOORD_1 with flipY=false textures:
 `uv * xy + zw`. `texture` only exists when embedding is enabled.)
@@ -137,9 +144,6 @@ only exists when the plugin's **Embed Skybox In Glb** toggle is enabled.
 
 - **Bake first.** Lightmaps and probes must be baked (Lighting window) before export; unbaked
   probes are skipped with a console warning.
-- **One scene per folder.** The lightmap PNGs use fixed names (`Lightmap-0.png`, ...) so the
-  offsets JSON's `colorName` matching works — exporting two different scenes into the same
-  folder overwrites each other's lightmap files.
 - **Sidecar files need a real file export** — they're written by `SaveGLB` / `SaveGLTFandBin`
   (the editor menu does this). Stream/byte-array exports have no output folder, so no sidecars.
 - **git-URL package consumers:** every file needs a committed `.meta` — Unity silently ignores
