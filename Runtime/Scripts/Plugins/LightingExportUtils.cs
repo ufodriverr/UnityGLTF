@@ -91,9 +91,14 @@ namespace UnityGLTF.Plugins
 		/// </summary>
 		public static Vector2Int ScaledSize(int width, int height, GLTFSettings settings)
 		{
-			var factor = Mathf.Clamp(settings.ExportTextureScale, 0.01f, 1f);
+			return ScaledSize(width, height, settings.ExportTextureScale, settings.ExportMaxTextureSize);
+		}
+
+		/// <summary>Same scaling math with explicit factors (scale 0.01-1, maxSize 0 = no cap).</summary>
+		public static Vector2Int ScaledSize(int width, int height, float scale, int maxSize)
+		{
+			var factor = Mathf.Clamp(scale, 0.01f, 1f);
 			var maxDimension = Mathf.Max(width, height);
-			var maxSize = settings.ExportMaxTextureSize;
 			if (maxSize > 0 && maxDimension * factor > maxSize)
 				factor = maxSize / (float)maxDimension;
 			return new Vector2Int(Mathf.Max(1, Mathf.RoundToInt(width * factor)), Mathf.Max(1, Mathf.RoundToInt(height * factor)));
@@ -117,7 +122,7 @@ namespace UnityGLTF.Plugins
 		/// Decodes a baked lightmap (raw HDR like BC6H/half-float, or RGBM-encoded) to a clamped
 		/// LDR sRGB Texture2D, ready for PNG export.
 		/// </summary>
-		public static Texture2D DecodeLightmapToLDR(Texture2D lightmap, string name, GLTFSettings settings)
+		public static Texture2D DecodeLightmapToLDR(Texture2D lightmap, string name, float scale, int maxSize)
 		{
 			var mat = LightmapDecodeMaterial;
 			if (!mat) return null;
@@ -131,7 +136,7 @@ namespace UnityGLTF.Plugins
 			mat.SetVector("_Decode", isRgbm
 				? (linearSpace ? new Vector4(34.493242f, 2.2f, 0f, 0f) : new Vector4(5f, 1f, 0f, 0f))   // pow(5, 2.2)
 				: (linearSpace ? new Vector4(4.59479f, 1f, 0f, 0f) : new Vector4(2f, 1f, 0f, 0f)));     // pow(2, 2.2)
-			var size = ScaledSize(lightmap.width, lightmap.height, settings);
+			var size = ScaledSize(lightmap.width, lightmap.height, scale, maxSize);
 			return BlitToSRGBTexture(lightmap, size.x, size.y, mat, name, TextureWrapMode.Clamp);
 		}
 

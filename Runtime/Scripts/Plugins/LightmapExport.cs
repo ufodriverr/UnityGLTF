@@ -29,6 +29,15 @@ namespace UnityGLTF.Plugins
 	public class LightmapExport : GLTFExportPlugin
 	{
 		[SerializeField]
+		[Range(0.01f, 1f)]
+		[Tooltip("Resolution scale for the exported lightmap PNGs (1 = full bake resolution). Lightmaps use these settings INSTEAD of the global Export Texture Scale / Export Max Texture Size.")]
+		private float lightmapTextureScale = 1f;
+
+		[SerializeField]
+		[Tooltip("Optional hard cap on the largest exported lightmap dimension, in pixels. 0 = no cap. Independent of the global Export Max Texture Size.")]
+		private int lightmapMaxTextureSize = 0;
+
+		[SerializeField]
 		[Tooltip("Also embed the lightmap PNGs as glTF textures inside the exported file. Increases file size; the Immersion web editor only reads the sidecar PNGs.")]
 		private bool embedTexturesInGlb = false;
 
@@ -43,7 +52,7 @@ namespace UnityGLTF.Plugins
 
 		public override GLTFExportPluginContext CreateInstance(ExportContext context)
 		{
-			return new LightmapExportContext(context, embedTexturesInGlb);
+			return new LightmapExportContext(context, embedTexturesInGlb, lightmapTextureScale, lightmapMaxTextureSize);
 		}
 	}
 
@@ -57,18 +66,20 @@ namespace UnityGLTF.Plugins
 			public Vector4 ScaleOffset;
 		}
 
-		private readonly ExportContext _context;
 		private readonly bool _embedTextures;
+		private readonly float _textureScale;
+		private readonly int _maxTextureSize;
 		private readonly List<LightmappedNode> _nodes = new List<LightmappedNode>();
 		private readonly HashSet<int> _usedIndices = new HashSet<int>();
 		// LightmapSettings.lightmaps returns a fresh array copy on every access, so cache it
 		private LightmapData[] _lightmaps;
 		private LightmapData[] Lightmaps => _lightmaps ?? (_lightmaps = LightmapSettings.lightmaps);
 
-		public LightmapExportContext(ExportContext context, bool embedTextures)
+		public LightmapExportContext(ExportContext context, bool embedTextures, float textureScale, int maxTextureSize)
 		{
-			_context = context;
 			_embedTextures = embedTextures;
+			_textureScale = textureScale;
+			_maxTextureSize = maxTextureSize;
 		}
 
 		public override void BeforeSceneExport(GLTFSceneExporter exporter, GLTFRoot gltfRoot)
@@ -121,7 +132,9 @@ namespace UnityGLTF.Plugins
 			foreach (var index in _usedIndices.OrderBy(i => i))
 			{
 				var baseName = $"Lightmap-{index}";
-				var ldr = LightingExportUtils.DecodeLightmapToLDR(lightmaps[index].lightmapColor, baseName, _context.settings);
+				// lightmaps have their own resolution settings (plugin fields), independent of
+				// the global texture scale/cap — baked lighting usually deserves the full bake
+				var ldr = LightingExportUtils.DecodeLightmapToLDR(lightmaps[index].lightmapColor, baseName, _textureScale, _maxTextureSize);
 				if (ldr == null) continue;
 
 				// prefix with the export name so lightmaps from different scenes can coexist in

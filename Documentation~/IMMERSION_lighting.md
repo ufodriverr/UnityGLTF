@@ -32,7 +32,10 @@ Each texture plugin also has an **Embed Textures In Glb** toggle (off by default
 additionally embeds the PNGs as regular glTF textures for non-Immersion consumers.
 
 The global **Export Texture Scale** / **Export Max Texture Size** settings are applied to the
-sidecar PNGs (per cube face for the reflection atlas).
+reflection atlas (per cube face) and the embedded skybox. **Lightmaps have their own settings**
+on the `IMMERSION_lightmaps` plugin — **Lightmap Texture Scale** and **Lightmap Max Texture
+Size** (defaults: full bake resolution, no cap) — so shrinking regular textures doesn't blur
+the baked lighting.
 
 ## HDR → PNG
 
