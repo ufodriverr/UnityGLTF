@@ -282,6 +282,19 @@ namespace UnityGLTF
 				}
 			}
 
+			// Generic fallback for custom shaders (ShaderGraph/Amplify/hand-written): find a
+			// texture property with a normal-map-like name (e.g. _Normal, NormalTexture, or a
+			// _BumpMap on a shader that doesn't use the _NORMALMAP keyword).
+			if (material.NormalTexture == null && TryFindShaderProperty(materialObj, _customNormalNames, UnityEngine.Rendering.ShaderPropertyType.Texture, out var customNormalProp))
+			{
+				var normalTex = materialObj.GetTexture(customNormalProp);
+				if (normalTex is Texture2D)
+				{
+					material.NormalTexture = ExportNormalTextureInfo(normalTex, TextureMapType.Normal, materialObj);
+					ExportTextureTransform(material.NormalTexture, materialObj, customNormalProp);
+				}
+			}
+
 			if (IsUnlit(materialObj))
 			{
 				ExportUnlit( material, materialObj );
@@ -354,6 +367,24 @@ namespace UnityGLTF
                 }
                 material.DoubleSided = true;
             }
+			else if (TryFindShaderProperty(materialObj, _customAlbedoNames, UnityEngine.Rendering.ShaderPropertyType.Texture, out var customAlbedoProp))
+			{
+				// generic fallback for custom shaders: albedo-like texture property by name
+				// (e.g. _Albedo, AlbedoMap, _MainTexture, ColorTexture, _AlbedoTransparency)
+				var mainTex = materialObj.GetTexture(customAlbedoProp);
+				var baseColor = Color.white;
+				if (TryFindShaderProperty(materialObj, _customColorFactorNames, UnityEngine.Rendering.ShaderPropertyType.Color, out var customColorProp))
+					baseColor = materialObj.GetColor(customColorProp);
+
+				material.PbrMetallicRoughness = new PbrMetallicRoughness()
+				{
+					MetallicFactor = 0,
+					RoughnessFactor = 1.0f,
+					BaseColorFactor = baseColor.ToNumericsColorLinear(),
+					BaseColorTexture = mainTex ? ExportTextureInfo(mainTex, TextureMapType.BaseColor) : null
+				};
+				ExportTextureTransform(material.PbrMetallicRoughness.BaseColorTexture, materialObj, customAlbedoProp);
+			}
 
 			if (materialObj.HasProperty("_OcclusionMap") || materialObj.HasProperty("occlusionTexture") || materialObj.HasProperty("_OcclusionTexture") || materialObj.HasProperty("_MaskMap"))
 			{
@@ -415,6 +446,44 @@ namespace UnityGLTF
 
 	        return id;
         }
+
+		// Generic property-name matching for custom shaders (ShaderGraph/Amplify/hand-written),
+		// so their materials still export albedo and normals without editing every material.
+		// A property matches when its name — leading underscores stripped, case-insensitive —
+		// equals one of the base names, optionally followed by Map/Texture/Tex/Transparency
+		// (covers _Albedo, AlbedoMap, _MainTexture, ColorTex, _AlbedoTransparency, ...).
+		private static readonly string[] _customAlbedoNames = { "albedo", "main", "color", "base", "basecolor", "diffuse" };
+		private static readonly string[] _customNormalNames = { "normal", "bump" };
+		private static readonly string[] _customColorFactorNames = { "basecolor", "color", "maincolor", "albedocolor", "tint", "tintcolor" };
+
+		private static bool TryFindShaderProperty(Material material, string[] baseNames, UnityEngine.Rendering.ShaderPropertyType type, out string propertyName)
+		{
+			propertyName = null;
+			var shader = material ? material.shader : null;
+			if (!shader) return false;
+
+			var count = shader.GetPropertyCount();
+			for (var i = 0; i < count; i++)
+			{
+				if (shader.GetPropertyType(i) != type) continue;
+				if (type == UnityEngine.Rendering.ShaderPropertyType.Texture &&
+				    shader.GetPropertyTextureDimension(i) != UnityEngine.Rendering.TextureDimension.Tex2D) continue;
+
+				var name = shader.GetPropertyName(i);
+				var normalized = name.TrimStart('_').ToLowerInvariant();
+				foreach (var baseName in baseNames)
+				{
+					if (!normalized.StartsWith(baseName, StringComparison.Ordinal)) continue;
+					var suffix = normalized.Substring(baseName.Length);
+					if (suffix.Length == 0 || suffix == "map" || suffix == "texture" || suffix == "tex" || suffix == "transparency")
+					{
+						propertyName = name;
+						return true;
+					}
+				}
+			}
+			return false;
+		}
 
         private bool IsPBRMetallicRoughness(Material material)
         {
