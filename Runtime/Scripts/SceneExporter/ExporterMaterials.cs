@@ -367,13 +367,14 @@ namespace UnityGLTF
                 }
                 material.DoubleSided = true;
             }
-			else if (TryFindShaderProperty(materialObj, _customAlbedoNames, UnityEngine.Rendering.ShaderPropertyType.Texture, out var customAlbedoProp))
+			else if (TryFindCustomBaseColorTexture(materialObj, out var customAlbedoProp))
 			{
 				// generic fallback for custom shaders: albedo-like texture property by name
-				// (e.g. _Albedo, AlbedoMap, _MainTexture, ColorTexture, _AlbedoTransparency)
+				// (e.g. _Albedo, AlbedoMap, _MainTexture, ColorTexture, _AlbedoTransparency,
+				// _DiffuseMap, _CorneaDiffuseMap, _ScleraDiffuseMap for Reallusion eye/hair shaders)
 				var mainTex = materialObj.GetTexture(customAlbedoProp);
 				var baseColor = Color.white;
-				if (TryFindShaderProperty(materialObj, _customColorFactorNames, UnityEngine.Rendering.ShaderPropertyType.Color, out var customColorProp))
+				if (TryFindShaderProperty(materialObj, _customColorFactorNames, UnityEngine.Rendering.ShaderPropertyType.Color, out var customColorProp, allowQualifierPrefix: false))
 					baseColor = materialObj.GetColor(customColorProp);
 
 				material.PbrMetallicRoughness = new PbrMetallicRoughness()
@@ -456,7 +457,47 @@ namespace UnityGLTF
 		private static readonly string[] _customNormalNames = { "normal", "bump" };
 		private static readonly string[] _customColorFactorNames = { "basecolor", "color", "maincolor", "albedocolor", "tint", "tintcolor" };
 
-		private static bool TryFindShaderProperty(Material material, string[] baseNames, UnityEngine.Rendering.ShaderPropertyType type, out string propertyName)
+		// Optional suffixes a texture property may carry after its base name
+		// (e.g. Albedo -> AlbedoMap / AlbedoTexture / AlbedoTex / AlbedoTransparency).
+		private static readonly string[] _customTextureSuffixes = { "", "map", "texture", "tex", "transparency" };
+
+		// Explicit, prioritized base-color/diffuse texture properties used by known custom shaders
+		// (e.g. Reallusion RL_* eye/hair/skin/teeth). Checked before the generic name matcher so that
+		// eyes (cornea/sclera) and hair export their albedo instead of coming out untextured.
+		private static readonly string[] _customBaseColorTextureNames =
+		{
+			"_DiffuseMap", "DiffuseMap",
+			"_ScleraDiffuseMap", "ScleraDiffuseMap",
+			"_CorneaDiffuseMap", "CorneaDiffuseMap",
+			"_AlbedoTransparency", "AlbedoTransparency",
+			"_BaseColorMap", "BaseColorMap"
+		};
+
+		// Finds a base-color/albedo texture for custom shaders that don't use the standard
+		// _MainTex / _BaseMap / _BaseColorTexture names. Prefers the explicit known property names
+		// (with an actual texture assigned), then falls back to the generic name matcher.
+		private bool TryFindCustomBaseColorTexture(Material material, out string propertyName)
+		{
+			propertyName = null;
+			if (!material) return false;
+
+			foreach (var name in _customBaseColorTextureNames)
+			{
+				if (material.HasProperty(name) && material.GetTexture(name))
+				{
+					propertyName = name;
+					return true;
+				}
+			}
+
+			return TryFindShaderProperty(material, _customAlbedoNames, ShaderPropertyType.Texture, out propertyName);
+		}
+
+		// allowQualifierPrefix: when true, a leading qualifier before the base name is allowed
+		// (e.g. _CorneaDiffuseMap / _ScleraDiffuseMap match "diffuse"). This is intended for texture
+		// lookups; color-factor lookups should keep it false so unrelated colors such as _IrisColor
+		// or _RootColor are not mistaken for the base color factor.
+		private static bool TryFindShaderProperty(Material material, string[] baseNames, UnityEngine.Rendering.ShaderPropertyType type, out string propertyName, bool allowQualifierPrefix = true)
 		{
 			propertyName = null;
 			var shader = material ? material.shader : null;
@@ -470,16 +511,41 @@ namespace UnityGLTF
 				    shader.GetPropertyTextureDimension(i) != UnityEngine.Rendering.TextureDimension.Tex2D) continue;
 
 				var name = shader.GetPropertyName(i);
-				var normalized = name.TrimStart('_').ToLowerInvariant();
-				foreach (var baseName in baseNames)
+				if (MatchesCustomBaseName(name, baseNames, allowQualifierPrefix))
+				{
+					propertyName = name;
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// A property matches when its name — leading underscores stripped, case-insensitive — is
+		// <baseName><suffix>, optionally with a leading qualifier when allowQualifierPrefix is true
+		// (matching on the END rather than only the start). This lets qualifier-prefixed names match:
+		// _CorneaDiffuseMap / _ScleraDiffuseMap -> "diffuse", _AlbedoTransparency -> "albedo",
+		// while still covering _Albedo, AlbedoMap, _MainTexture, ...
+		private static bool MatchesCustomBaseName(string propertyName, string[] baseNames, bool allowQualifierPrefix)
+		{
+			if (string.IsNullOrEmpty(propertyName)) return false;
+			var normalized = propertyName.TrimStart('_').ToLowerInvariant();
+			foreach (var baseName in baseNames)
+			{
+				if (allowQualifierPrefix)
+				{
+					foreach (var suffix in _customTextureSuffixes)
+					{
+						var token = baseName + suffix;
+						if (normalized == token || normalized.EndsWith(token, StringComparison.Ordinal))
+							return true;
+					}
+				}
+				else
 				{
 					if (!normalized.StartsWith(baseName, StringComparison.Ordinal)) continue;
 					var suffix = normalized.Substring(baseName.Length);
 					if (suffix.Length == 0 || suffix == "map" || suffix == "texture" || suffix == "tex" || suffix == "transparency")
-					{
-						propertyName = name;
 						return true;
-					}
 				}
 			}
 			return false;
@@ -793,6 +859,20 @@ namespace UnityGLTF
 						Mathf.RoundToInt(material.GetFloat("baseColorTextureTexCoord")) :
 						material.HasProperty("_BaseColorTextureTexCoord") ?
 							Mathf.RoundToInt(material.GetFloat("_BaseColorTextureTexCoord")) : 0;
+				}
+			}
+
+			// Fallback for custom shaders (e.g. Reallusion RL_* eye/hair/skin/teeth) that are treated
+			// as PBR metallic-roughness but name their albedo differently (_CorneaDiffuseMap,
+			// _ScleraDiffuseMap, _DiffuseMap, _AlbedoTransparency, ...). Without this, eyes and hair
+			// export untextured.
+			if (pbr.BaseColorTexture == null && TryFindCustomBaseColorTexture(material, out var customBaseColorProp))
+			{
+				var customBaseColorTex = material.GetTexture(customBaseColorProp);
+				if (customBaseColorTex)
+				{
+					pbr.BaseColorTexture = ExportTextureInfo(customBaseColorTex, TextureMapType.BaseColor);
+					ExportTextureTransform(pbr.BaseColorTexture, material, customBaseColorProp);
 				}
 			}
 
