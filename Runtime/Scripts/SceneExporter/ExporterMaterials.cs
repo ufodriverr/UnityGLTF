@@ -467,8 +467,11 @@ namespace UnityGLTF
 		private static readonly string[] _customBaseColorTextureNames =
 		{
 			"_DiffuseMap", "DiffuseMap",
-			"_ScleraDiffuseMap", "ScleraDiffuseMap",
+			// Cornea BEFORE Sclera: on RL_CorneaShaderBasic_* the cornea diffuse is the actual
+			// full eye texture (iris + sclera baked); picking the sclera map exports a blank
+			// white eye. Sclera still matches on shaders that only assign a sclera map.
 			"_CorneaDiffuseMap", "CorneaDiffuseMap",
+			"_ScleraDiffuseMap", "ScleraDiffuseMap",
 			"_AlbedoTransparency", "AlbedoTransparency",
 			"_BaseColorMap", "BaseColorMap"
 		};
