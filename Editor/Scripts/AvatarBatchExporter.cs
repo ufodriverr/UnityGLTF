@@ -126,8 +126,10 @@ namespace Immersion.Export
 		// Pose the instance into its AnimatorController's base-layer default state at t=0 (the
 		// natural pose the module shows). The exported rest pose AND every static baked track
 		// (fingers, face-clip body holds) then match the manual in-scene exports instead of the
-		// raw T-pose prefab. Sampled via AnimationMode (same mechanism UnityGLTF's own humanoid
-		// bake uses), snapshotted, and re-applied after AnimationMode restores the original.
+		// raw T-pose prefab. Humanoid clips carry muscle curves, so plain SampleAnimationClip is
+		// a no-op — sample through a PlayableGraph bound to the Animator, exactly like
+		// ExporterAnimationHumanoid does, snapshot the pose, and re-apply it after AnimationMode
+		// restores the original.
 		private static void PoseToDefaultState(GameObject instance)
 		{
 			var animator = instance.GetComponentInChildren<Animator>(true);
@@ -142,11 +144,18 @@ namespace Immersion.Export
 				return;
 			}
 
-			UnityEditor.AnimationMode.StartAnimationMode();
+			var playableGraph = UnityEngine.Playables.PlayableGraph.Create();
+			var driver = ScriptableObject.CreateInstance<UnityEditor.AnimationModeDriver>();
 			try
 			{
+				var clipPlayable = UnityEngine.Animations.AnimationClipPlayable.Create(playableGraph, clip);
+				var output = UnityEngine.Animations.AnimationPlayableOutput.Create(playableGraph, "PoseSample", animator);
+				output.SetSourcePlayable(clipPlayable);
+				playableGraph.SetTimeUpdateMode(UnityEngine.Playables.DirectorUpdateMode.Manual);
+
+				UnityEditor.AnimationMode.StartAnimationMode(driver);
 				UnityEditor.AnimationMode.BeginSampling();
-				UnityEditor.AnimationMode.SampleAnimationClip(instance, clip, 0f);
+				UnityEditor.AnimationMode.SamplePlayableGraph(playableGraph, 0, 0f);
 				UnityEditor.AnimationMode.EndSampling();
 
 				var bones = instance.GetComponentsInChildren<Transform>(true);
@@ -154,8 +163,8 @@ namespace Immersion.Export
 				for (var b = 0; b < bones.Length; b++)
 					pose[b] = (bones[b], bones[b].localPosition, bones[b].localRotation, bones[b].localScale);
 
-				UnityEditor.AnimationMode.StopAnimationMode(); // restores the live pose…
-				foreach (var (t, p, r, s) in pose)             // …so re-apply the sampled one
+				UnityEditor.AnimationMode.StopAnimationMode(driver); // restores the live pose…
+				foreach (var (t, p, r, s) in pose)                   // …so re-apply the sampled one
 				{
 					if (!t) continue;
 					t.localPosition = p;
@@ -166,7 +175,9 @@ namespace Immersion.Export
 			}
 			finally
 			{
-				if (UnityEditor.AnimationMode.InAnimationMode()) UnityEditor.AnimationMode.StopAnimationMode();
+				if (UnityEditor.AnimationMode.InAnimationMode()) UnityEditor.AnimationMode.StopAnimationMode(driver);
+				if (playableGraph.IsValid()) playableGraph.Destroy();
+				UnityEngine.Object.DestroyImmediate(driver);
 			}
 		}
 
