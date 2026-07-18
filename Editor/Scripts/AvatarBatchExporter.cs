@@ -62,6 +62,15 @@ namespace Immersion.Export
 			var settings = GLTFSettings.GetDefaultSettings();
 			settings.ExportAnimations = true;
 
+			// DefaultPoseExport re-poses skeletons to the BIND pose (T-pose, splayed hands)
+			// before export. Bones a clip doesn't drive (fingers in most clips, the whole body
+			// in face-capture clips) bake static tracks from the CURRENT pose, so with the
+			// plugin on they freeze in T-pose — visibly broken hands/arms on the web. We pose
+			// each avatar into its controller's default state instead (below), so the plugin
+			// must not undo that.
+			foreach (var plugin in settings.ExportPlugins)
+				if (plugin is DefaultPoseExport) plugin.Enabled = false;
+
 			var failures = 0;
 			for (var i = 0; i < avatars.Count; i++)
 			{
@@ -85,6 +94,8 @@ namespace Immersion.Export
 						if (!animator) throw new Exception("prefab has no Animator for -controller override");
 						animator.runtimeAnimatorController = controller;
 					}
+
+					PoseToDefaultState(instance);
 
 					var jsonPath = i < animatorJsons.Count ? animatorJsons[i] : null;
 					AnimatorExtrasExport.PayloadJson = string.IsNullOrEmpty(jsonPath) ? null : File.ReadAllText(jsonPath);
@@ -110,6 +121,53 @@ namespace Immersion.Export
 
 			Debug.Log("[AvatarBatchExporter] done: " + (avatars.Count - failures) + "/" + avatars.Count + " exported to " + outDir);
 			Exit(failures > 0 ? 1 : 0);
+		}
+
+		// Pose the instance into its AnimatorController's base-layer default state at t=0 (the
+		// natural pose the module shows). The exported rest pose AND every static baked track
+		// (fingers, face-clip body holds) then match the manual in-scene exports instead of the
+		// raw T-pose prefab. Sampled via AnimationMode (same mechanism UnityGLTF's own humanoid
+		// bake uses), snapshotted, and re-applied after AnimationMode restores the original.
+		private static void PoseToDefaultState(GameObject instance)
+		{
+			var animator = instance.GetComponentInChildren<Animator>(true);
+			var controller = animator ? animator.runtimeAnimatorController as AnimatorController : null;
+			var defaultState = controller && controller.layers.Length > 0 && controller.layers[0].stateMachine
+				? controller.layers[0].stateMachine.defaultState
+				: null;
+			var clip = defaultState ? defaultState.motion as AnimationClip : null;
+			if (!clip)
+			{
+				Debug.LogWarning("[AvatarBatchExporter] no default-state clip to pose '" + instance.name + "' — exporting the prefab pose.");
+				return;
+			}
+
+			UnityEditor.AnimationMode.StartAnimationMode();
+			try
+			{
+				UnityEditor.AnimationMode.BeginSampling();
+				UnityEditor.AnimationMode.SampleAnimationClip(instance, clip, 0f);
+				UnityEditor.AnimationMode.EndSampling();
+
+				var bones = instance.GetComponentsInChildren<Transform>(true);
+				var pose = new (Transform t, Vector3 p, Quaternion r, Vector3 s)[bones.Length];
+				for (var b = 0; b < bones.Length; b++)
+					pose[b] = (bones[b], bones[b].localPosition, bones[b].localRotation, bones[b].localScale);
+
+				UnityEditor.AnimationMode.StopAnimationMode(); // restores the live pose…
+				foreach (var (t, p, r, s) in pose)             // …so re-apply the sampled one
+				{
+					if (!t) continue;
+					t.localPosition = p;
+					t.localRotation = r;
+					t.localScale = s;
+				}
+				Debug.Log("[AvatarBatchExporter] posed '" + instance.name + "' to default state '" + defaultState.name + "' (clip '" + clip.name + "' @0s).");
+			}
+			finally
+			{
+				if (UnityEditor.AnimationMode.InAnimationMode()) UnityEditor.AnimationMode.StopAnimationMode();
+			}
 		}
 
 		private static string GetArg(string flag)
