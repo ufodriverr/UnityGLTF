@@ -55,7 +55,11 @@ namespace Immersion.Export
 			Directory.CreateDirectory(outDir);
 			EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
-			var settings = GLTFSettings.GetOrCreateSettings();
+			// Fresh in-memory settings with every plugin registered at its EnabledByDefault state.
+			// The persisted project settings asset can lose its plugin sub-assets in batch mode
+			// (saved with empty ImportPlugins/ExportPlugins lists), which silently disables ALL
+			// export plugins on the next run — GetDefaultSettings() sidesteps that entirely.
+			var settings = GLTFSettings.GetDefaultSettings();
 			settings.ExportAnimations = true;
 
 			var failures = 0;
