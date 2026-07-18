@@ -6,6 +6,7 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.Playables;
 using UnityGLTF;
 using UnityGLTF.Plugins;
 
@@ -144,14 +145,14 @@ namespace Immersion.Export
 				return;
 			}
 
-			var playableGraph = UnityEngine.Playables.PlayableGraph.Create();
+			var playableGraph = PlayableGraph.Create();
 			var driver = ScriptableObject.CreateInstance<UnityEditor.AnimationModeDriver>();
 			try
 			{
-				var clipPlayable = UnityEngine.Animations.AnimationClipPlayable.Create(playableGraph, clip);
+				var clipPlayable = (Playable)UnityEngine.Animations.AnimationClipPlayable.Create(playableGraph, clip);
 				var output = UnityEngine.Animations.AnimationPlayableOutput.Create(playableGraph, "PoseSample", animator);
 				output.SetSourcePlayable(clipPlayable);
-				playableGraph.SetTimeUpdateMode(UnityEngine.Playables.DirectorUpdateMode.Manual);
+				playableGraph.SetTimeUpdateMode(DirectorUpdateMode.Manual);
 
 				UnityEditor.AnimationMode.StartAnimationMode(driver);
 				UnityEditor.AnimationMode.BeginSampling();
