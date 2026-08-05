@@ -145,41 +145,48 @@ namespace Immersion.Export
 				return;
 			}
 
-			var playableGraph = PlayableGraph.Create();
-			var driver = ScriptableObject.CreateInstance<UnityEditor.AnimationModeDriver>();
+			// Drive the Animator itself (Play + Update) instead of AnimationMode playable
+			// sampling: only the full Animator evaluation runs the humanoid TWIST solve
+			// (armTwist/foreArmTwist 0.5) that distributes axial rotation onto the
+			// *Twist01/*Twist02 sibling bones. AnimationMode.SamplePlayableGraph writes the
+			// muscle-mapped bones but leaves twist bones at their bind rotation — on rigs whose
+			// FBX bind carries zero twist (the 157 Salesforce cast, unlike the pre-twisted
+			// A-pose LuxMed binds) that bakes corkscrew-arm statics: the ARMS bug all over again.
 			try
 			{
-				var clipPlayable = (Playable)UnityEngine.Animations.AnimationClipPlayable.Create(playableGraph, clip);
-				var output = UnityEngine.Animations.AnimationPlayableOutput.Create(playableGraph, "PoseSample", animator);
-				output.SetSourcePlayable(clipPlayable);
-				playableGraph.SetTimeUpdateMode(DirectorUpdateMode.Manual);
+				animator.enabled = true;
+				animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+				animator.Play(Animator.StringToHash(defaultState.name), 0, 0f);
+				animator.Update(0f);
+				animator.Update(0.000001f); // muscle pose (twist bones NOT written in edit mode)
 
-				UnityEditor.AnimationMode.StartAnimationMode(driver);
-				UnityEditor.AnimationMode.BeginSampling();
-				UnityEditor.AnimationMode.SamplePlayableGraph(playableGraph, 0, 0f);
-				UnityEditor.AnimationMode.EndSampling();
-
-				var bones = instance.GetComponentsInChildren<Transform>(true);
-				var pose = new (Transform t, Vector3 p, Quaternion r, Vector3 s)[bones.Length];
-				for (var b = 0; b < bones.Length; b++)
-					pose[b] = (bones[b], bones[b].localPosition, bones[b].localRotation, bones[b].localScale);
-
-				UnityEditor.AnimationMode.StopAnimationMode(driver); // restores the live pose…
-				foreach (var (t, p, r, s) in pose)                   // …so re-apply the sampled one
+				// Round-trip the evaluated pose through HumanPoseHandler: GetHumanPose reads the
+				// muscle values off the posed skeleton, SetHumanPose performs the full
+				// muscle→skeleton writeback — which includes the humanoid twist distribution
+				// (armTwist/foreArmTwist) that edit-mode Animator.Update skips.
+				if (animator.isHuman && animator.avatar)
 				{
-					if (!t) continue;
-					t.localPosition = p;
-					t.localRotation = r;
-					t.localScale = s;
+					var handler = new HumanPoseHandler(animator.avatar, animator.transform);
+					var humanPose = new HumanPose();
+					handler.GetHumanPose(ref humanPose);
+					handler.SetHumanPose(ref humanPose);
+					handler.Dispose();
+					var probe = FindDeep(animator.transform, "CC_Base_L_ForearmTwist01");
+					if (probe) Debug.Log("[AvatarBatchExporter] twist probe L_ForearmTwist01 localRotation = " + probe.localRotation.ToString("F4"));
 				}
-				Debug.Log("[AvatarBatchExporter] posed '" + instance.name + "' to default state '" + defaultState.name + "' (clip '" + clip.name + "' @0s).");
+				Debug.Log("[AvatarBatchExporter] posed '" + instance.name + "' to default state '" + defaultState.name + "' (clip '" + clip.name + "' @0s, HumanPose twist-solve).");
 			}
 			finally
 			{
-				if (UnityEditor.AnimationMode.InAnimationMode()) UnityEditor.AnimationMode.StopAnimationMode(driver);
-				if (playableGraph.IsValid()) playableGraph.Destroy();
-				UnityEngine.Object.DestroyImmediate(driver);
+				animator.enabled = false; // freeze the pose for export
 			}
+		}
+
+		private static Transform FindDeep(Transform root, string name)
+		{
+			foreach (var t in root.GetComponentsInChildren<Transform>(true))
+				if (t.name == name) return t;
+			return null;
 		}
 
 		private static string GetArg(string flag)
