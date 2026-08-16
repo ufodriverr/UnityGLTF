@@ -146,24 +146,26 @@ namespace Immersion.Export
 			}
 
 			// Drive the Animator itself (Play + Update) instead of AnimationMode playable
-			// sampling: only the full Animator evaluation runs the humanoid TWIST solve
-			// (armTwist/foreArmTwist 0.5) that distributes axial rotation onto the
-			// *Twist01/*Twist02 sibling bones. AnimationMode.SamplePlayableGraph writes the
-			// muscle-mapped bones but leaves twist bones at their bind rotation — on rigs whose
-			// FBX bind carries zero twist (the 157 Salesforce cast, unlike the pre-twisted
-			// A-pose LuxMed binds) that bakes corkscrew-arm statics: the ARMS bug all over again.
+			// sampling: it poses the muscle-mapped bones to the default state rather than the
+			// raw T-pose prefab. Do NOT add any twist-solve handling on top: the TwistProbe
+			// play-mode ground truth (Editor/Scripts/TwistProbe.cs, commit 9ff128df) proved
+			// Unity's own runtime leaves unmapped *Twist*/ShareBone helper bones frozen at
+			// their bind rotation on these rigs, so bind-frozen twist statics in the export
+			// are Unity-faithful (worst export-vs-probe delta 2.49°). The LuxMed rigs' ~30°
+			// twist values are CC A-pose bind AUTHORING, not a runtime solve.
 			try
 			{
 				animator.enabled = true;
 				animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
 				animator.Play(Animator.StringToHash(defaultState.name), 0, 0f);
 				animator.Update(0f);
-				animator.Update(0.000001f); // muscle pose (twist bones NOT written in edit mode)
+				animator.Update(0.000001f); // muscle pose on the mapped bones
 
 				// Round-trip the evaluated pose through HumanPoseHandler: GetHumanPose reads the
-				// muscle values off the posed skeleton, SetHumanPose performs the full
-				// muscle→skeleton writeback — which includes the humanoid twist distribution
-				// (armTwist/foreArmTwist) that edit-mode Animator.Update skips.
+				// muscle values off the posed skeleton, SetHumanPose runs the muscle→skeleton
+				// writeback for the mapped bones. Per TwistProbe (see above) this does NOT write
+				// the unmapped *Twist* helpers — no runtime path does; they stay at bind, which
+				// is exactly what Unity's runtime produces.
 				if (animator.isHuman && animator.avatar)
 				{
 					var handler = new HumanPoseHandler(animator.avatar, animator.transform);
@@ -174,7 +176,7 @@ namespace Immersion.Export
 					var probe = FindDeep(animator.transform, "CC_Base_L_ForearmTwist01");
 					if (probe) Debug.Log("[AvatarBatchExporter] twist probe L_ForearmTwist01 localRotation = " + probe.localRotation.ToString("F4"));
 				}
-				Debug.Log("[AvatarBatchExporter] posed '" + instance.name + "' to default state '" + defaultState.name + "' (clip '" + clip.name + "' @0s, HumanPose twist-solve).");
+				Debug.Log("[AvatarBatchExporter] posed '" + instance.name + "' to default state '" + defaultState.name + "' (clip '" + clip.name + "' @0s, HumanPose round-trip).");
 			}
 			finally
 			{
