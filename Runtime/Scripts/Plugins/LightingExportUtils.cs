@@ -7,12 +7,13 @@ namespace UnityGLTF.Plugins
 {
 	/// <summary>
 	/// Shared helpers for the IMMERSION lighting export plugins (lightmaps, reflection probes,
-	/// skybox). Converts Unity's HDR lighting textures to plain LDR sRGB textures so they can be
+	/// skybox). Converts Unity's HDR lighting textures to plain LDR textures so they can be
 	/// exported as standard PNGs through the regular texture pipeline — which also means the
 	/// global ExportTextureScale / ExportMaxTextureSize settings apply to them.
 	///
-	/// Note: values above 1.0 (very bright light) are clamped, same as manually converting a
-	/// Unity lightmap EXR to PNG in an image editor.
+	/// Encoding: reflections/skybox use hardware sRGB; lightmaps use the Photopea curve (see
+	/// DecodeLightmapToLDR / UnityGLTFLightmapDecode.shader). Values above 1.0 (very bright
+	/// light) are clamped in both paths.
 	/// </summary>
 	internal static class LightingExportUtils
 	{
@@ -120,7 +121,12 @@ namespace UnityGLTF.Plugins
 
 		/// <summary>
 		/// Decodes a baked lightmap (raw HDR like BC6H/half-float, or RGBM-encoded) to a clamped
-		/// LDR sRGB Texture2D, ready for PNG export.
+		/// LDR Texture2D, ready for PNG export. The LDR encoding is NOT the exact sRGB formula:
+		/// the decode shader applies the "Photopea curve" (sRGB sampled at 17 knots, linearly
+		/// interpolated), which is darker in the toe and matches the reference manual HDR->PNG
+		/// conversions — with hardware sRGB encoding the web scene renders visibly lighter than
+		/// Unity in dark areas (531 lightmap fix, 2026-08-27). The blit target is therefore
+		/// LINEAR: the shader output already holds the final encoded bytes.
 		/// </summary>
 		public static Texture2D DecodeLightmapToLDR(Texture2D lightmap, string name, float scale, int maxSize)
 		{
@@ -137,7 +143,7 @@ namespace UnityGLTF.Plugins
 				? (linearSpace ? new Vector4(34.493242f, 2.2f, 0f, 0f) : new Vector4(5f, 1f, 0f, 0f))   // pow(5, 2.2)
 				: (linearSpace ? new Vector4(4.59479f, 1f, 0f, 0f) : new Vector4(2f, 1f, 0f, 0f)));     // pow(2, 2.2)
 			var size = ScaledSize(lightmap.width, lightmap.height, scale, maxSize);
-			return BlitToSRGBTexture(lightmap, size.x, size.y, mat, name, TextureWrapMode.Clamp);
+			return BlitToLDRTexture(lightmap, size.x, size.y, mat, name, TextureWrapMode.Clamp, srgbTarget: false);
 		}
 
 		/// <summary>
@@ -218,12 +224,21 @@ namespace UnityGLTF.Plugins
 
 		private static Texture2D BlitToSRGBTexture(Texture source, int width, int height, Material material, string name, TextureWrapMode wrapMode)
 		{
-			var rt = RenderTexture.GetTemporary(width, height, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
+			return BlitToLDRTexture(source, width, height, material, name, wrapMode, srgbTarget: true);
+		}
+
+		// srgbTarget: true = linear shader output, hardware applies the exact sRGB formula on write
+		// (reflections/skybox). false = LINEAR target, the shader output already holds the final
+		// encoded bytes (lightmaps, which use the Photopea curve instead of formula sRGB).
+		private static Texture2D BlitToLDRTexture(Texture source, int width, int height, Material material, string name, TextureWrapMode wrapMode, bool srgbTarget)
+		{
+			var rt = RenderTexture.GetTemporary(width, height, 0, RenderTextureFormat.ARGB32,
+				srgbTarget ? RenderTextureReadWrite.sRGB : RenderTextureReadWrite.Linear);
 			var prevActive = RenderTexture.active;
 			var prevSRGB = GL.sRGBWrite;
 			try
 			{
-				GL.sRGBWrite = true;
+				GL.sRGBWrite = srgbTarget;
 				Graphics.Blit(source, rt, material);
 
 				var tex = new Texture2D(width, height, TextureFormat.ARGB32, false, false);

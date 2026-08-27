@@ -12,7 +12,8 @@ namespace UnityGLTF.Plugins
 	/// the Immersion web editor consumes:
 	///
 	/// - one PNG per lightmap page, named <c>Lightmap-&lt;index&gt;.png</c> (HDR/RGBM decoded to
-	///   LDR sRGB, same look as manually converting the lightmap EXR to PNG),
+	///   LDR with the Photopea curve — see UnityGLTFLightmapDecode.shader — matching the
+	///   reference manual .hdr-in-Photopea-to-PNG conversion, NOT the exact sRGB formula),
 	/// - a <c>&lt;exportName&gt;_lightmap_offsets.json</c> manifest with the editor's schema:
 	///   <c>lightmaps: [{ index, colorName }]</c> and
 	///   <c>renderers: [{ path, lightmapIndex, tilingX, tilingY, offsetX, offsetY }]</c>
