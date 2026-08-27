@@ -86,6 +86,25 @@ namespace Immersion.Export
 					instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
 					instance.transform.localPosition = Vector3.zero;
 
+					// Some configured prefabs ship with an INACTIVE root (the module activates
+					// them at runtime — e.g. 531's Lisa.prefab). An inactive root makes the
+					// Animator refuse to evaluate (so PoseToDefaultState silently leaves the
+					// raw bind/T-pose) and makes UnityGLTF drop every animated curve
+					// ("Object X is disabled, not exporting animated curve") — the GLB comes
+					// out with ZERO animations. Activate before posing/exporting.
+					if (!instance.activeSelf)
+					{
+						// UNPACK FIRST: SetActive on a prefab INSTANCE is only an override, and the
+						// humanoid sampler's Undo.RegisterFullObjectHierarchyUndo/PerformUndo pair
+						// (ExporterAnimationHumanoid.CollectClipCurvesBySampling) drops it again
+						// mid-export — the rig is inactive by the time the curves are written and
+						// every channel is skipped. Unpacking makes the activation plain object
+						// state that survives the undo.
+						PrefabUtility.UnpackPrefabInstance(instance, PrefabUnpackMode.Completely, InteractionMode.AutomatedAction);
+						instance.SetActive(true);
+						Debug.Log("[AvatarBatchExporter] unpacked + activated inactive prefab root '" + name + "' before export.");
+					}
+
 					var controllerPath = i < controllers.Count ? controllers[i] : null;
 					if (!string.IsNullOrEmpty(controllerPath))
 					{
