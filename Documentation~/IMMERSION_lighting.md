@@ -9,11 +9,14 @@ editor loads loose PNGs + JSON, not data embedded inside a GLB:
 
 ```
 Bank.glb
-Bank_Lightmap-0.png             one per baked lightmap page (LDR sRGB)
-Bank_Lightmap-1.png
+Bank_Lightmap-0_RGBM8.png       one per baked lightmap page (lossless RGBM8, full bake res)
+Bank_Lightmap-1_RGBM8.png
 Bank_lightmap_offsets.json      lightmap manifest (web editor schema)
 Bank_reflection.png             6x1 cube-face atlas (main probe, or skybox fallback)
 ```
+
+A scene has exactly **one file per lightmap page**: the RGBM8 sidecar. The old tone-curve LDR
+page (`Bank_Lightmap-0.png`) is no longer written — see [RGBM8 pages](#rgbm8-pages-custom-immersion-shaders).
 
 All sidecar names are prefixed with the export's base name, so several scenes can coexist in
 the same folder or asset store.
@@ -24,26 +27,38 @@ them up by name (`{scene}_lightmap_offsets.json`, `colorName` matching for light
 
 | Plugin | Sidecar output | glTF extension(s) |
 |---|---|---|
-| `IMMERSION_lightmaps` | `Lightmap-<i>.png` + `<name>_lightmap_offsets.json` | `IMMERSION_lightmaps` (root), `IMMERSION_lightmap` (node) |
-| `Gltf Custom Shaders Export` | `<name>_Lightmap-<i>_RGBM8.png` (full-precision pages) | `IMMERSION_lightmaps.rgbmPages` (root), `extras.customData` (node) |
+| `IMMERSION_lightmaps` | `<name>_lightmap_offsets.json` (no page pixels) | `IMMERSION_lightmaps` (root), `IMMERSION_lightmap` (node) |
+| `Gltf Custom Shaders Export` | `<name>_Lightmap-<i>_RGBM8.png` (the lightmap pages) | `extras.customData` (node) |
 | `IMMERSION_reflection_probes` | `<name>_reflection.png` (6×1 cube atlas) | `IMMERSION_reflection_probe` (node) |
 | `IMMERSION_scene_settings` | — | `IMMERSION_scene_settings` (root: ambient, fog) |
 
+The two lightmap plugins are split by responsibility: the custom-shaders plugin writes the page
+PIXELS, the `IMMERSION_lightmaps` plugin writes the page NAMES + tiling (offsets JSON and both
+extensions). Their callback order is undefined, so the page file name is *derived* by both from
+`ImmersionLightmapPages.PageFileName(i)` rather than handed over. Disabling the custom-shaders
+plugin therefore leaves a scene whose extensions name page files that don't exist; disabling
+`IMMERSION_lightmaps` leaves the pages declared (minimal root extension, fallback) but drops the
+offsets JSON and the per-node tiling.
+
 Each texture plugin also has an **Embed Textures In Glb** toggle (off by default) that
-additionally embeds the PNGs as regular glTF textures for non-Immersion consumers.
+additionally embeds the PNGs as regular glTF textures for non-Immersion consumers. For
+`IMMERSION_lightmaps` that copy is the clamped LDR decode (see [HDR → PNG](#hdr--png)) and it is
+the ONLY thing the plugin's **Lightmap Texture Scale** / **Lightmap Max Texture Size** settings
+still affect — the RGBM8 sidecars are always full bake resolution, uncapped and unscaled.
 
 The global **Export Texture Scale** / **Export Max Texture Size** settings are applied to the
-reflection atlas (per cube face) and the embedded skybox. **Lightmaps have their own settings**
-on the `IMMERSION_lightmaps` plugin — **Lightmap Texture Scale** and **Lightmap Max Texture
-Size** (defaults: full bake resolution, no cap) — so shrinking regular textures doesn't blur
-the baked lighting.
+reflection atlas (per cube face) and the embedded skybox, never to lightmaps.
 
 ## HDR → PNG
 
-Unity stores lightmaps, probes and skyboxes in HDR. These plugins decode the Unity encoding
-(BC6H/float raw HDR, RGBM, or dLDR) to linear color, clamp to LDR and write standard sRGB PNGs —
-the same result as manually converting a Unity lightmap EXR to PNG in an image editor. Light
-intensity above 1.0 is clamped.
+Unity stores lightmaps, probes and skyboxes in HDR. For **probes and the skybox** these plugins
+decode the Unity encoding (BC6H/float raw HDR, RGBM, or dLDR) to linear color, clamp to LDR and
+write standard sRGB PNGs — the same result as manually converting a Unity lightmap EXR to PNG in
+an image editor. Light intensity above 1.0 is clamped.
+
+**Lightmaps no longer take that path**: their pages ship unclamped as RGBM8 (below). The clamped
+LDR decode is only produced for the optional embedded copy (`IMMERSION_lightmaps` ▸ *Embed
+Textures In Glb*).
 
 ## Lightmaps
 
@@ -66,8 +81,12 @@ intensity above 1.0 is clamped.
 }
 ```
 
-- `colorName` is matched case-insensitively against uploaded file names (without extension) —
-  it always equals the exported PNG's base name.
+- `colorName` is matched case-insensitively against uploaded file names (without extension),
+  exact match first, then prefix. It stays `<name>_Lightmap-<i>` — i.e. the *prefix* of the
+  RGBM8 page file, which is what it now resolves to (`Bank_Lightmap-0` →
+  `Bank_Lightmap-0_RGBM8.png`). Deliberately unchanged so existing projects and uploads keep
+  matching. (Caveat of prefix matching: a scene with ≥11 pages could resolve `…_Lightmap-1` to
+  `…_Lightmap-10_RGBM8.png` depending on file order; real enviro scenes have one or two pages.)
 - `path` is the node name path from the export root (the editor matches full path first, then
   leaf name).
 - `tilingX/Y`, `offsetX/Y` are the **raw Unity** `Renderer.lightmapScaleOffset` values — the
@@ -79,45 +98,52 @@ The glTF node extension `IMMERSION_lightmap` carries the same data in-file:
 ```json
 {
   "lightmapIndex": 0,
-  "image": "{name}_Lightmap-0.png",
+  "image": "Bank_Lightmap-0_RGBM8.png",
   "scaleOffset": [sx, sy, ox, oy],
   "scaleOffsetGltf": [sx, sy, ox, oy],
   "texture": 3
 }
 ```
 
-(In extension payloads `{name}` stays literal — extensions are serialized into the glTF before
-the output file name is known; substitute the export's base name when resolving. Sidecar file
-names and the offsets JSON have it already resolved.)
+**Name form — one rule everywhere:** every lightmap file name that reaches an output file is
+**resolved**, with no `{name}` token left in it. The token only lives inside the exporter
+(`GLTFSceneExporter.SidecarNameToken`): sidecar file names and text sidecars are substituted on
+write, and both lightmap extensions substitute it themselves via
+`GLTFSceneExporter.SidecarBaseName` before serialization. (Until 2026-09 the extension payloads
+shipped the literal `{name}` token and consumers had to substitute it — that is gone.)
 
 (`scaleOffsetGltf` is pre-converted for glTF TEXCOORD_1 with flipY=false textures:
 `uv * xy + zw`. `texture` only exists when embedding is enabled.)
 
 ### RGBM8 pages (custom Immersion shaders)
 
-The `Gltf Custom Shaders Export` plugin exports the same lightmaps a second time, **unclamped**,
-as RGBM8 (`Hidden/RGBMEncode`, `_MaxRange = 5`, decode `hdr = rgb * a * 5` in linear space) —
-that is what the custom `Immersion/Web/*` shaders sample. Since 2026-09 those pages ship as
-**loose sidecars**, not inside the GLB:
+The `Gltf Custom Shaders Export` plugin encodes every baked lightmap **unclamped** to RGBM8
+(`Hidden/RGBMEncode`, `_MaxRange = 5`, decode `hdr = rgb * a * 5` in linear space) — that is what
+the custom `Immersion/Web/*` shaders sample, and since 2026-09 it is **the only lightmap page a
+scene exports**, as a loose sidecar rather than inside the GLB:
 
 - `<name>_Lightmap-<i>_RGBM8.png` — lossless 8-bit RGBA PNG, full bake resolution, no tone
   curve, no rescale. Same pixel/row orientation as every other exported PNG.
+- **the `_RGBM8` suffix is part of the contract**: the web runtime detects the encoding by file
+  name (`/_?rgbm8?(\.|$)/i` → bind raw to the Revolution `uLightmap`, or decode `rgb * a * 5`
+  for a vanilla lightmap slot). Any other name is treated as a legacy LDR page.
 - the GLB keeps a **4×4 black RGBM page** per lightmap under the original texture name
   (`<unityLightmapName>_<i>_RGBM8`), so `extras.customData.lm_index` stays a valid index into
   the model's lightmap page list and page ordering is unchanged. A consumer that ignores the
   sidecars therefore renders visibly unlit rather than subtly wrong.
-- the root extension lists them in page order:
+- the root extension names them (payload **version 2**):
 
 ```json
 {
-  "version": 1,
-  "lightmaps": [ { "lightmapIndex": 0, "image": "{name}_Lightmap-0.png" } ],
-  "rgbmPages": [ "Bank_Lightmap-0_RGBM8.png" ]
+  "version": 2,
+  "lightmaps": [ { "lightmapIndex": 0, "image": "Bank_Lightmap-0_RGBM8.png" } ]
 }
 ```
 
-Unlike `image`, `rgbmPages` entries are **already resolved** (the `{name}` token is substituted
-with the exported scene name), so they can be fetched relative to the GLB as-is.
+  `image` is the resolved sidecar file name, fetchable relative to the GLB as-is; `texture` is
+  added next to it only when `IMMERSION_lightmaps`' **Embed Textures In Glb** put an LDR copy in
+  the file. Version 1 pointed `image` at the removed LDR page (in `{name}` token form) and listed
+  the RGBM8 pages in a separate `rgbmPages` array; that array is gone — read `lightmaps[].image`.
 
 Set `GltfCustomData.EmbedFullLightmapPages = true` (or tick **Embed Full Lightmap Pages** on the
 plugin) to embed the full-resolution pages again; the sidecars are written either way.

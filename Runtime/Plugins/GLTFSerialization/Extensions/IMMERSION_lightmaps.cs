@@ -4,22 +4,26 @@ namespace GLTF.Schema
 {
 	/// <summary>
 	/// Root-level glTF extension that lists the baked Unity lightmaps exported with the asset.
-	/// Each entry maps a Unity lightmap index to a glTF texture (a PNG that has already been
-	/// decoded from Unity's HDR/RGBM lightmap encoding to plain LDR color).
+	/// Each entry maps a Unity lightmap index to the loose page file that carries its pixels.
 	///
-	/// Payload shape:
+	/// Payload shape (version 2):
 	/// {
-	///   "version": 1,
-	///   "lightmaps": [ { "lightmapIndex": 0, "image": "Bank_Lightmap-0.png", "texture": 3 }, ... ],
-	///   "rgbmPages": [ "Bank_Lightmap-0_RGBM8.png", ... ]
+	///   "version": 2,
+	///   "lightmaps": [ { "lightmapIndex": 0, "image": "Bank_Lightmap-0_RGBM8.png", "texture": 3 }, ... ]
 	/// }
 	///
-	/// <c>lightmaps</c> holds the LDR (Photopea-curve) pages used by the vanilla-material path.
-	/// <c>rgbmPages</c> lists the loose RGBM8 sidecar PNGs — full-precision lightmaps for the
-	/// custom Immersion web shaders — in lightmap-page order, i.e. entry i belongs to the page the
-	/// nodes' <c>extras.customData.lm_index == i</c> points at. By default the GLB only carries a
-	/// 4x4 black placeholder for each of those pages (see <c>GltfCustomDataExporter</c>), so a
-	/// consumer that ignores <c>rgbmPages</c> renders unlit.
+	/// <c>image</c> is the RESOLVED file name (the <c>{name}</c> sidecar token is already
+	/// substituted) of the page's lossless RGBM8 sidecar PNG — decode <c>hdr = rgb * a * 5</c> in
+	/// linear space; the <c>_RGBM8</c> suffix is how consumers recognise the encoding. Entry order
+	/// follows <c>lightmapIndex</c>, which is also the nodes' <c>extras.customData.lm_index</c>.
+	/// By default the GLB only carries a 4x4 black placeholder page per lightmap (see
+	/// <c>GltfCustomDataExporter</c>), so a consumer that ignores the sidecars renders unlit.
+	/// <c>texture</c> is optional and only present when the IMMERSION_lightmaps plugin's
+	/// "Embed Textures In Glb" toggle added a clamped LDR copy for non-Immersion consumers.
+	///
+	/// Version 1 (pre-2026-09) instead pointed <c>image</c> at a tone-curve LDR sidecar
+	/// (<c>Bank_Lightmap-0.png</c>, in unresolved <c>{name}</c> token form) and listed the RGBM8
+	/// pages in a separate <c>rgbmPages</c> array. That LDR sidecar is no longer written.
 	///
 	/// Which mesh uses which lightmap (and with what UV tiling) is stored per node in
 	/// <see cref="IMMERSION_lightmap"/>. Built by <c>LightmapExportContext</c> and
@@ -69,7 +73,8 @@ namespace GLTF.Schema
 	/// Payload shape:
 	/// {
 	///   "lightmapIndex": 0,          // Unity lightmap index (matches the root extension list)
-	///   "texture": 3,                // glTF texture index of the lightmap PNG (for convenience)
+	///   "image": "Bank_Lightmap-0_RGBM8.png", // resolved page file name, as in the root list
+	///   "texture": 3,                // optional: embedded LDR copy, only with Embed Textures In Glb
 	///   "scaleOffset": [sx,sy,ox,oy],     // Unity Renderer.lightmapScaleOffset, for Unity-style UV2
 	///   "scaleOffsetGltf": [sx,sy,ox,oy]  // same tiling, pre-converted for the glTF TEXCOORD_1
 	/// }

@@ -418,6 +418,7 @@ namespace UnityGLTF
 		private HashSet<string> _imageExportPaths;
 		private List<FileInfo> _fileInfos;
 		private List<SidecarFileInfo> _sidecarFiles;
+		private string _sidecarBaseName;
 		private HashSet<string> _fileNames;
 		private List<UniqueTexture> _textures;
 		private Dictionary<int, int> _exportedMaterials;
@@ -762,6 +763,8 @@ namespace UnityGLTF
 			if (dirName != null && !Directory.Exists(dirName))
 				Directory.CreateDirectory(dirName);
 			_shouldUseInternalBufferForImages = true;
+			// must be known before the plugins run (they bake resolved sidecar names into extensions)
+			_sidecarBaseName = Path.GetFileNameWithoutExtension(fullPath);
 
 			using (FileStream glbFile = new FileStream(fullPath, FileMode.Create))
 			{
@@ -907,6 +910,8 @@ namespace UnityGLTF
 
 			// sanitized file path can differ
 			fileName = Path.GetFileNameWithoutExtension(fullPath);
+			// must be known before the plugins run (they bake resolved sidecar names into extensions)
+			_sidecarBaseName = fileName;
 			var binFile = File.Create(fullPath);
 
 			_bufferWriter = new BinaryWriterWithLessAllocations(binFile);
@@ -1377,6 +1382,16 @@ namespace UnityGLTF
 		/// file name (without extension) when the files are written.
 		/// </summary>
 		public const string SidecarNameToken = "{name}";
+
+		/// <summary>
+		/// The base file name (no extension, sanitized) sidecar files are written with — i.e. what
+		/// <see cref="SidecarNameToken"/> resolves to. Set by <see cref="SaveGLB"/> /
+		/// <see cref="SaveGLTFandBin"/> BEFORE the scene is exported, so export plugins can put
+		/// already-resolved sidecar file names into glTF extension payloads (the glTF JSON itself
+		/// is never run through the token replacement). Null for stream/byte-array exports, which
+		/// write no sidecars at all.
+		/// </summary>
+		public string SidecarBaseName => _sidecarBaseName;
 
 		/// <summary>
 		/// Registers a loose file to be written next to the exported .glb/.gltf — unlike
