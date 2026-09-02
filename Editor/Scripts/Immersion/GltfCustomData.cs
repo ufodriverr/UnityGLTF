@@ -505,9 +505,14 @@ public static class NormalMapBlitExporter
             Graphics.Blit(null, rt, mat, 0);
 
             RenderTexture.active = rt;
-            var outTex = new Texture2D(width, height, TextureFormat.RGBA32, false, true); // linear: true
+            // mipChain: TRUE — the exporter derives the glTF sampler's minFilter from
+            // Texture2D.mipmapCount; a mip-less decode ships LINEAR (no mipmap) and the
+            // web samples mip 0 at every minification. On the 20x-tiled CC skin
+            // micro-normal (_DetailNormalMap) that aliased into per-pixel sparkle
+            // ("salt desert" skin, 531 r3 QA 2026-09-02). Apply(true) builds the chain.
+            var outTex = new Texture2D(width, height, TextureFormat.RGBA32, true, true); // mipChain: true, linear: true
             outTex.ReadPixels(new Rect(0, 0, width, height), 0, 0);
-            outTex.Apply(false, false);
+            outTex.Apply(true, false);
             outTex.name = normalMap.name;
             return outTex;
         }
