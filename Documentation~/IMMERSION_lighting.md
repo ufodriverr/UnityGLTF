@@ -25,6 +25,7 @@ them up by name (`{scene}_lightmap_offsets.json`, `colorName` matching for light
 | Plugin | Sidecar output | glTF extension(s) |
 |---|---|---|
 | `IMMERSION_lightmaps` | `Lightmap-<i>.png` + `<name>_lightmap_offsets.json` | `IMMERSION_lightmaps` (root), `IMMERSION_lightmap` (node) |
+| `Gltf Custom Shaders Export` | `<name>_Lightmap-<i>_RGBM8.png` (full-precision pages) | `IMMERSION_lightmaps.rgbmPages` (root), `extras.customData` (node) |
 | `IMMERSION_reflection_probes` | `<name>_reflection.png` (6×1 cube atlas) | `IMMERSION_reflection_probe` (node) |
 | `IMMERSION_scene_settings` | — | `IMMERSION_scene_settings` (root: ambient, fog) |
 
@@ -91,6 +92,35 @@ names and the offsets JSON have it already resolved.)
 
 (`scaleOffsetGltf` is pre-converted for glTF TEXCOORD_1 with flipY=false textures:
 `uv * xy + zw`. `texture` only exists when embedding is enabled.)
+
+### RGBM8 pages (custom Immersion shaders)
+
+The `Gltf Custom Shaders Export` plugin exports the same lightmaps a second time, **unclamped**,
+as RGBM8 (`Hidden/RGBMEncode`, `_MaxRange = 5`, decode `hdr = rgb * a * 5` in linear space) —
+that is what the custom `Immersion/Web/*` shaders sample. Since 2026-09 those pages ship as
+**loose sidecars**, not inside the GLB:
+
+- `<name>_Lightmap-<i>_RGBM8.png` — lossless 8-bit RGBA PNG, full bake resolution, no tone
+  curve, no rescale. Same pixel/row orientation as every other exported PNG.
+- the GLB keeps a **4×4 black RGBM page** per lightmap under the original texture name
+  (`<unityLightmapName>_<i>_RGBM8`), so `extras.customData.lm_index` stays a valid index into
+  the model's lightmap page list and page ordering is unchanged. A consumer that ignores the
+  sidecars therefore renders visibly unlit rather than subtly wrong.
+- the root extension lists them in page order:
+
+```json
+{
+  "version": 1,
+  "lightmaps": [ { "lightmapIndex": 0, "image": "{name}_Lightmap-0.png" } ],
+  "rgbmPages": [ "Bank_Lightmap-0_RGBM8.png" ]
+}
+```
+
+Unlike `image`, `rgbmPages` entries are **already resolved** (the `{name}` token is substituted
+with the exported scene name), so they can be fetched relative to the GLB as-is.
+
+Set `GltfCustomData.EmbedFullLightmapPages = true` (or tick **Embed Full Lightmap Pages** on the
+plugin) to embed the full-resolution pages again; the sidecars are written either way.
 
 ## Reflection probes
 

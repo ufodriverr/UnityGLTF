@@ -7,6 +7,7 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityGLTF;
+using UnityGLTF.Plugins;
 
 namespace Immersion.Export
 {
@@ -70,11 +71,18 @@ namespace Immersion.Export
 					var exporter = new GLTFSceneExporter(transforms, context);
 					exporter.SaveGLB(outDir, scene.name);
 
+					// Any loose file the export plugins wrote for this scene: the LDR lightmap pages
+					// (<scene>_Lightmap-<i>.png), the full-precision RGBM8 pages
+					// (<scene>_Lightmap-<i>_RGBM8.png — these hold the lighting now, the GLB only
+					// carries 4x4 black placeholders), the offsets JSON, reflection strip, skybox.
 					var sidecars = Directory.GetFiles(outDir)
 						.Select(Path.GetFileName)
 						.Where(f => f.StartsWith(scene.name + "_", StringComparison.Ordinal))
+						.OrderBy(f => f, StringComparer.Ordinal)
 						.ToArray();
+					var rgbmPages = ImmersionLightmapPages.RgbmPages.Count;
 					Debug.Log("[SceneBatchExporter] OK " + name + " -> " + Path.Combine(outDir, scene.name + ".glb")
+						+ " (RGBM8 lightmap pages: " + rgbmPages + ")"
 						+ (sidecars.Length > 0 ? " (sidecars: " + string.Join(", ", sidecars) + ")" : ""));
 				}
 				catch (Exception e)

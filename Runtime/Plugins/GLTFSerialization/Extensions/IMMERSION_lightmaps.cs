@@ -10,11 +10,20 @@ namespace GLTF.Schema
 	/// Payload shape:
 	/// {
 	///   "version": 1,
-	///   "lightmaps": [ { "lightmapIndex": 0, "texture": 3 }, ... ]
+	///   "lightmaps": [ { "lightmapIndex": 0, "image": "Bank_Lightmap-0.png", "texture": 3 }, ... ],
+	///   "rgbmPages": [ "Bank_Lightmap-0_RGBM8.png", ... ]
 	/// }
 	///
+	/// <c>lightmaps</c> holds the LDR (Photopea-curve) pages used by the vanilla-material path.
+	/// <c>rgbmPages</c> lists the loose RGBM8 sidecar PNGs — full-precision lightmaps for the
+	/// custom Immersion web shaders — in lightmap-page order, i.e. entry i belongs to the page the
+	/// nodes' <c>extras.customData.lm_index == i</c> points at. By default the GLB only carries a
+	/// 4x4 black placeholder for each of those pages (see <c>GltfCustomDataExporter</c>), so a
+	/// consumer that ignores <c>rgbmPages</c> renders unlit.
+	///
 	/// Which mesh uses which lightmap (and with what UV tiling) is stored per node in
-	/// <see cref="IMMERSION_lightmap"/>. Built by <c>LightmapExportContext</c>.
+	/// <see cref="IMMERSION_lightmap"/>. Built by <c>LightmapExportContext</c> and
+	/// <c>GltfCustomDataExporter</c> (both go through <c>ImmersionLightmapPages</c>).
 	/// </summary>
 	public class IMMERSION_lightmaps : IExtension
 	{

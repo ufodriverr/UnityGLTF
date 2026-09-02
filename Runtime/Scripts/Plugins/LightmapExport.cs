@@ -57,6 +57,94 @@ namespace UnityGLTF.Plugins
 		}
 	}
 
+	/// <summary>
+	/// Cross-plugin hand-off for the EXTERNAL RGBM8 lightmap pages.
+	///
+	/// The Immersion custom-data export plugin (<c>GltfCustomDataExporter</c>, Editor assembly)
+	/// writes the full-precision RGBM8 lightmap pages as <c>&lt;name&gt;_Lightmap-&lt;i&gt;_RGBM8.png</c>
+	/// sidecars, but the file names belong in the root <see cref="IMMERSION_lightmaps"/> extension
+	/// that <see cref="LightmapExportContext"/> builds. Plugin callbacks fire in the order of
+	/// <c>GLTFSettings.ExportPlugins</c>, so neither plugin can assume it runs first: both call
+	/// <see cref="ApplyToRoot"/> and the call is idempotent.
+	/// </summary>
+	public static class ImmersionLightmapPages
+	{
+		/// <summary>Root-extension key holding the sidecar file names, in lightmap-page order.</summary>
+		public const string RgbmPagesKey = "rgbmPages";
+
+		private static readonly List<string> _rgbmPages = new List<string>();
+
+		/// <summary>Registered RGBM8 sidecar names (still carrying the sidecar name token).</summary>
+		public static IReadOnlyList<string> RgbmPages => _rgbmPages;
+
+		/// <summary>Drops the previous export's page list. Call from BeforeSceneExport.</summary>
+		public static void Reset()
+		{
+			_rgbmPages.Clear();
+		}
+
+		/// <summary>Records the RGBM8 sidecar file names, in lightmap-page (lm_index) order.</summary>
+		public static void SetRgbmPages(IEnumerable<string> fileNames)
+		{
+			_rgbmPages.Clear();
+			if (fileNames != null) _rgbmPages.AddRange(fileNames);
+		}
+
+		/// <summary>
+		/// Adds/refreshes <c>rgbmPages</c> on the root <see cref="IMMERSION_lightmaps"/> extension,
+		/// creating the extension if no plugin has added it yet. No-op when nothing was registered.
+		/// </summary>
+		public static void ApplyToRoot(GLTFSceneExporter exporter, GLTFRoot gltfRoot)
+		{
+			if (gltfRoot == null || _rgbmPages.Count == 0) return;
+
+			// The GLB/glTF JSON is not run through the sidecar name-token replacement (only file
+			// names and text sidecars are), so resolve the token here against the exported scene
+			// name — which is the GLB base name SaveGLB was given.
+			var baseName = ResolveExportName(gltfRoot);
+			var pages = new JArray();
+			foreach (var fileName in _rgbmPages)
+			{
+				pages.Add(string.IsNullOrEmpty(baseName)
+					? fileName
+					: fileName.Replace(GLTFSceneExporter.SidecarNameToken, baseName));
+			}
+
+			GetOrCreateRootExtensionData(exporter, gltfRoot)[RgbmPagesKey] = pages;
+		}
+
+		/// <summary>
+		/// Returns the root <see cref="IMMERSION_lightmaps"/> payload, creating (and declaring) the
+		/// extension on first use. Both plugins write into the same object, so neither may call
+		/// <c>GLTFRoot.AddExtension</c> directly — that throws when the extension already exists.
+		/// </summary>
+		public static JObject GetOrCreateRootExtensionData(GLTFSceneExporter exporter, GLTFRoot gltfRoot)
+		{
+			if (gltfRoot.Extensions != null
+				&& gltfRoot.Extensions.TryGetValue(IMMERSION_lightmaps.EXTENSION_NAME, out var existing)
+				&& existing is IMMERSION_lightmaps lightmaps)
+			{
+				if (lightmaps.data == null) lightmaps.data = new JObject();
+				if (lightmaps.data["version"] == null) lightmaps.data["version"] = 1;
+				return lightmaps.data;
+			}
+
+			var data = new JObject { ["version"] = 1 };
+			gltfRoot.AddExtension(IMMERSION_lightmaps.EXTENSION_NAME, new IMMERSION_lightmaps(data));
+			exporter?.DeclareExtensionUsage(IMMERSION_lightmaps.EXTENSION_NAME, false);
+			return data;
+		}
+
+		private static string ResolveExportName(GLTFRoot gltfRoot)
+		{
+			var scenes = gltfRoot.Scenes;
+			if (scenes == null || scenes.Count == 0) return null;
+			var index = gltfRoot.Scene != null ? gltfRoot.Scene.Id : 0;
+			if (index < 0 || index >= scenes.Count) index = 0;
+			return scenes[index]?.Name;
+		}
+	}
+
 	public class LightmapExportContext : GLTFExportPluginContext
 	{
 		private struct LightmappedNode
@@ -86,6 +174,9 @@ namespace UnityGLTF.Plugins
 		public override void BeforeSceneExport(GLTFSceneExporter exporter, GLTFRoot gltfRoot)
 		{
 			LightingExportUtils.ReleaseTexturesFromPreviousExports();
+			// Also reset here (not just in the custom-data plugin) so a disabled custom-data plugin
+			// can't leak a previous export's RGBM page list into this one.
+			ImmersionLightmapPages.Reset();
 		}
 
 		public override void BeforeTextureExport(GLTFSceneExporter exporter, ref GLTFSceneExporter.UniqueTexture texture, string textureSlot)
@@ -214,11 +305,13 @@ namespace UnityGLTF.Plugins
 
 			exporter.DeclareExtensionUsage(IMMERSION_lightmap.EXTENSION_NAME, false);
 			exporter.DeclareExtensionUsage(IMMERSION_lightmaps.EXTENSION_NAME, false);
-			gltfRoot.AddExtension(IMMERSION_lightmaps.EXTENSION_NAME, new IMMERSION_lightmaps(new JObject
-			{
-				["version"] = 1,
-				["lightmaps"] = lightmapsArr,
-			}));
+			// Merge into the shared payload — the custom-data plugin may already have created the
+			// extension for its "rgbmPages" list (plugin callback order is not defined).
+			ImmersionLightmapPages.GetOrCreateRootExtensionData(exporter, gltfRoot)["lightmaps"] = lightmapsArr;
+
+			// "rgbmPages": the external RGBM8 pages written by the Immersion custom-data plugin.
+			// Called from both plugins because callback order isn't guaranteed; idempotent.
+			ImmersionLightmapPages.ApplyToRoot(exporter, gltfRoot);
 		}
 
 		// Node name path from the export root down to this transform (inclusive), e.g.

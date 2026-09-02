@@ -10,6 +10,21 @@ using UnityGLTF.Plugins;
 
 public class GltfCustomData : GLTFExportPlugin
 {
+    /// <summary>
+    /// Global override for the serialized <c>embedFullLightmapPages</c> field, for batch/CLI
+    /// exports that run on <c>GLTFSettings.GetDefaultSettings()</c> (e.g.
+    /// <c>Immersion.Export.SceneBatchExporter</c>) and therefore never see the settings asset.
+    /// Set it to true to restore the pre-sidecar behaviour.
+    /// </summary>
+    public static bool EmbedFullLightmapPages = false;
+
+    [SerializeField]
+    [Tooltip("Embed the full-resolution RGBM8 lightmap pages inside the GLB (legacy behaviour). " +
+             "Off (default): every page ships as a lossless '<name>_Lightmap-<i>_RGBM8.png' sidecar " +
+             "next to the GLB and only a 4x4 black placeholder page stays in the GLB — so lm_index " +
+             "and the lightmap page order/names are unchanged, but the GLB no longer carries the pixels.")]
+    private bool embedFullLightmapPages = false;
+
     public override string DisplayName => "Gltf Custom Shaders Export";
     public override string Description => "Exports custom shaders and textures to glTF";
     public override bool EnabledByDefault => true;
@@ -17,7 +32,7 @@ public class GltfCustomData : GLTFExportPlugin
 
     public override GLTFExportPluginContext CreateInstance(ExportContext context)
     {
-        return new GltfCustomDataExporter();
+        return new GltfCustomDataExporter(EmbedFullLightmapPages || embedFullLightmapPages);
     }
 }
 
@@ -26,7 +41,28 @@ public class GltfCustomDataExporter : GLTFExportPluginContext
     private const float LIGHTMAP_DYNAMIC_RANGE = 5f;
     private const string LIGHTMAP_PACKED_SHADER = "Hidden/RGBMEncode";
     private const string CUBEMAP_PACKED_SHADER = "Hidden/CubemapToEquirect";
+
+    // Sidecar file name pattern for the external RGBM8 lightmap pages. The "{name}" token is
+    // replaced with the exported file's base name when the sidecars are written, so this matches
+    // the LDR sidecars written by UnityGLTF.Plugins.LightmapExport ("<name>_Lightmap-<i>.png").
+    private const string LIGHTMAP_SIDECAR_SUFFIX = "_RGBM8.png";
+
+    // Size of the black stand-in page embedded in the GLB when the real pages ship as sidecars.
+    private const int LIGHTMAP_PLACEHOLDER_SIZE = 4;
+
+    // Texture slot that maps to { linear = true, alphaMode = Always } in
+    // GLTFSceneExporter.GetExportSettingsForSlot — RGBM is linear data and MUST keep its alpha
+    // (the multiplier channel), and unlike "linearWithAlpha" this slot skips the TextureImporter
+    // sRGB probe that only makes sense for on-disk assets.
+    private const string RGBM_TEXTURE_SLOT = "rgbm";
+
     private readonly List<Texture2D> _tempTexturesToDestroy = new();
+    private readonly bool _embedFullLightmapPages;
+
+    public GltfCustomDataExporter(bool embedFullLightmapPages = false)
+    {
+        _embedFullLightmapPages = embedFullLightmapPages;
+    }
 
     // ───────────────────────── Export hooks ─────────────────────────
 
@@ -269,15 +305,36 @@ public class GltfCustomDataExporter : GLTFExportPluginContext
         base.AfterNodeExport(exporter, gltfRoot, transform, node);
     }
 
+    public override void BeforeSceneExport(GLTFSceneExporter exporter, GLTFRoot gltfRoot)
+    {
+        // The RGBM page list is static (it has to survive until whichever plugin builds the root
+        // IMMERSION_lightmaps extension runs); clear last export's leftovers.
+        ImmersionLightmapPages.Reset();
+        base.BeforeSceneExport(exporter, gltfRoot);
+    }
+
     // Exports lightmap textures
     public override void AfterSceneExport(GLTFSceneExporter exporter, GLTFRoot gltfRoot)
     {
         ExportLightmaps(exporter);
+        // Idempotent, and LightmapExportContext calls it too — plugin callback order is just the
+        // order of GLTFSettings.ExportPlugins, so neither side can assume it runs first.
+        ImmersionLightmapPages.ApplyToRoot(exporter, gltfRoot);
         base.AfterSceneExport(exporter, gltfRoot);
     }
 
     // ───────────────────── Lightmap export ──────────────────────────
 
+    /// <summary>
+    /// Encodes every baked lightmap page to RGBM8 (decode: <c>hdr = rgb * a * 5.0</c>, linear) and
+    /// ships it as a lossless <c>&lt;exportName&gt;_Lightmap-&lt;i&gt;_RGBM8.png</c> sidecar next to
+    /// the GLB — byte-for-byte the same encode that used to be embedded, with no tone curve and no
+    /// resize. The GLB itself only gets a 4x4 black placeholder page per lightmap under the SAME
+    /// texture name, so <c>lm_index</c> stays a valid index into the model's lightmap page list and
+    /// the web runtime's page ordering (name match + glTF texture order) is untouched. Set
+    /// <see cref="GltfCustomData.EmbedFullLightmapPages"/> (or the plugin's serialized flag) to
+    /// embed the full pages again; the sidecars are written either way.
+    /// </summary>
     private void ExportLightmaps(GLTFSceneExporter exporter)
     {
         int lightmapsCount = LightmapSettings.lightmaps.Length;
@@ -291,11 +348,8 @@ public class GltfCustomDataExporter : GLTFExportPluginContext
         }
 
         using var matScope = new MaterialScope(shader);
-        var exportSettings = new GLTFSceneExporter.TextureExportSettings
-        {
-            linear = true,
-            alphaMode = GLTFSceneExporter.TextureExportSettings.AlphaMode.Always,
-        };
+        var sidecarNames = new List<string>();
+        int exportedPages = 0;
 
         for (int i = 0; i < lightmapsCount; i++)
         {
@@ -304,13 +358,43 @@ public class GltfCustomDataExporter : GLTFExportPluginContext
 
             // Encode HDR -> RGBM(8) into an in-memory Texture2D (RGBA32, linear)
             var rgbmTex = EncodeLightmap(src, matScope.Material, LIGHTMAP_DYNAMIC_RANGE);
-            rgbmTex.name = $"{src.name}_{i}_RGBM8";
+            var pageName = $"{src.name}_{i}_RGBM8";
+            rgbmTex.name = pageName;
+            ApplyLightmapPageSampler(rgbmTex);
 
-            exporter.ExportTexture(rgbmTex, rgbmTex.name, exportSettings);
-            _tempTexturesToDestroy.Add(rgbmTex);
+            // Sidecar: the raw RGBM8 readback straight to PNG (8-bit RGBA, non-premultiplied,
+            // lossless). Same row order as the embedded page — both are Unity ReadPixels results
+            // run through EncodeToPNG, which is what the LDR sidecar writer does as well.
+            var sidecarName = $"{GLTFSceneExporter.SidecarNameToken}_Lightmap-{i}{LIGHTMAP_SIDECAR_SUFFIX}";
+            exporter.AddSidecarFile(sidecarName, rgbmTex.EncodeToPNG());
+            sidecarNames.Add(sidecarName);
+
+            if (_embedFullLightmapPages)
+            {
+                exporter.ExportTexture(rgbmTex, RGBM_TEXTURE_SLOT);
+                _tempTexturesToDestroy.Add(rgbmTex);
+            }
+            else
+            {
+                // The full-res encode is already on disk; don't keep an RGBA32 copy of every
+                // lightmap page alive until the delayed cleanup runs.
+                UnityEngine.Object.DestroyImmediate(rgbmTex);
+
+                // Black, not white/neutral: a runtime that ignores the sidecar then renders an
+                // obviously unlit scene instead of a subtly wrong one.
+                var placeholder = CreateBlackLightmapPage(pageName);
+                exporter.ExportTexture(placeholder, RGBM_TEXTURE_SLOT);
+                _tempTexturesToDestroy.Add(placeholder);
+            }
+
+            exportedPages++;
         }
 
-        Debug.Log($"Exported {lightmapsCount} lightmaps as in-memory RGBM PNG textures into glTF (MaxRange={LIGHTMAP_DYNAMIC_RANGE}).");
+        ImmersionLightmapPages.SetRgbmPages(sidecarNames);
+
+        Debug.Log(_embedFullLightmapPages
+            ? $"Exported {exportedPages} lightmap pages as RGBM8 (MaxRange={LIGHTMAP_DYNAMIC_RANGE}): full pages EMBEDDED in the glTF + '*_RGBM8.png' sidecars."
+            : $"Exported {exportedPages} lightmap pages as RGBM8 (MaxRange={LIGHTMAP_DYNAMIC_RANGE}): '*_RGBM8.png' SIDECARS + {LIGHTMAP_PLACEHOLDER_SIZE}x{LIGHTMAP_PLACEHOLDER_SIZE} black placeholder pages in the glTF (set GltfCustomData.EmbedFullLightmapPages to embed the full pages).");
     }
 
     private static Texture2D EncodeLightmap(Texture source, Material rgbmMat, float maxRange)
@@ -319,7 +403,35 @@ public class GltfCustomDataExporter : GLTFExportPluginContext
         return BlitToTexture2D(source, source.width, source.height, rgbmMat,
             RenderTextureFormat.ARGB32, TextureFormat.RGBA32);
     }
-    
+
+    /// <summary>
+    /// A 4x4 RGBM8 page that decodes to linear black: rgb = 0, m = 1 (alpha 255), so
+    /// <c>rgb * (a * MaxRange) == 0</c>. Alpha is kept at 255 rather than 0 so nothing in the
+    /// export or import chain can mistake the page for a fully transparent texture.
+    /// </summary>
+    private static Texture2D CreateBlackLightmapPage(string name)
+    {
+        // linear: true — same flags the real page gets, so no sRGB conversion on export.
+        var tex = new Texture2D(LIGHTMAP_PLACEHOLDER_SIZE, LIGHTMAP_PLACEHOLDER_SIZE,
+            TextureFormat.RGBA32, false, true);
+        var pixels = new Color32[LIGHTMAP_PLACEHOLDER_SIZE * LIGHTMAP_PLACEHOLDER_SIZE];
+        for (int p = 0; p < pixels.Length; p++)
+            pixels[p] = new Color32(0, 0, 0, 255);
+        tex.SetPixels32(pixels);
+        tex.Apply(false, false);
+        tex.name = name;
+        ApplyLightmapPageSampler(tex);
+        return tex;
+    }
+
+    // Lightmap atlas pages must clamp (Repeat bleeds the opposite edge of the atlas into a chart);
+    // no mip chain is built here — the web runtime generates its own mips for the sidecar page.
+    private static void ApplyLightmapPageSampler(Texture2D tex)
+    {
+        tex.wrapMode = TextureWrapMode.Clamp;
+        tex.filterMode = FilterMode.Bilinear;
+    }
+
     public static ReflectionProbe GetMostInfluentialProbe(Renderer renderer)
     {
         if (renderer == null) return null;
