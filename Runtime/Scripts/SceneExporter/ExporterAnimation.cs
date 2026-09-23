@@ -128,6 +128,7 @@ namespace UnityGLTF
 			foreach (var layer in animatorController.layers)
 			{
 				if (!layer.stateMachine) continue;
+				// IMMERSION: fork change (kept for the flattened animator export).
 				// Recurse into sub-state-machines so nested states (and their speeds) are also matched.
 				foreach (var state in GetStatesRecursive(layer.stateMachine))
 				{
@@ -140,6 +141,7 @@ namespace UnityGLTF
 			}
 		}
 
+		// IMMERSION: fork helper.
 		// Returns all AnimatorStates of a state machine, including those nested in sub-state-machines.
 		private static IEnumerable<AnimatorState> GetStatesRecursive(AnimatorStateMachine stateMachine)
 		{
@@ -235,6 +237,7 @@ namespace UnityGLTF
 						ExportAnimationClip(clips[i], name, nodeTransform, speed);
 					}
 
+					// IMMERSION: fork change — blend-tree members must be baked too.
 					// Clips that aren't used directly by a state (e.g. members of a BlendTree) are still
 					// referenced by the animator controller, so they need to be baked too. Export once at default speed.
 					if (!exportedForAnyState)

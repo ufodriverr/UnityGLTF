@@ -36,13 +36,13 @@ namespace Immersion.Export
 	{
 		public static void ExportScenes()
 		{
-			var scenePaths = SplitArg(GetArg("-scenes"));
-			var outDir = GetArg("-out");
+			var scenePaths = CliArgs.Split(CliArgs.Get("-scenes"));
+			var outDir = CliArgs.Get("-out");
 
 			if (scenePaths.Count == 0 || string.IsNullOrEmpty(outDir))
 			{
 				Debug.LogError("[SceneBatchExporter] usage: -scenes \"Assets/A.unity;Assets/B.unity\" -out <dir>");
-				Exit(1);
+				CliArgs.Exit(1);
 				return;
 			}
 
@@ -94,28 +94,7 @@ namespace Immersion.Export
 			}
 
 			Debug.Log("[SceneBatchExporter] done: " + (scenePaths.Count - failures) + "/" + scenePaths.Count + " exported to " + outDir);
-			Exit(failures > 0 ? 1 : 0);
-		}
-
-		private static string GetArg(string flag)
-		{
-			var args = Environment.GetCommandLineArgs();
-			for (var i = 0; i < args.Length - 1; i++)
-				if (string.Equals(args[i], flag, StringComparison.OrdinalIgnoreCase))
-					return args[i + 1];
-			return null;
-		}
-
-		private static List<string> SplitArg(string value)
-		{
-			return string.IsNullOrEmpty(value)
-				? new List<string>()
-				: value.Split(';').Select(s => s.Trim().Trim('"')).ToList();
-		}
-
-		private static void Exit(int code)
-		{
-			if (Application.isBatchMode) EditorApplication.Exit(code);
+			CliArgs.Exit(failures > 0 ? 1 : 0);
 		}
 	}
 }

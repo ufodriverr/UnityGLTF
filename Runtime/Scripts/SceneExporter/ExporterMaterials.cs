@@ -282,6 +282,7 @@ namespace UnityGLTF
 				}
 			}
 
+			// IMMERSION: fork addition.
 			// Generic fallback for custom shaders (ShaderGraph/Amplify/hand-written): find a
 			// texture property with a normal-map-like name (e.g. _Normal, NormalTexture, or a
 			// _BumpMap on a shader that doesn't use the _NORMALMAP keyword).
@@ -316,6 +317,7 @@ namespace UnityGLTF
 				var mainTex = materialObj.GetTexture("_BaseMap");
 				material.PbrMetallicRoughness = new PbrMetallicRoughness()
 				{
+					// IMMERSION: fork change (metallic 0 / roughness 1 for unknown shaders, here and below).
 					// unknown custom shader: assume non-metallic, otherwise the glTF defaults
 					// (metallic = 1) make the material render like dark metal in viewers
 					MetallicFactor = 0,
@@ -369,6 +371,7 @@ namespace UnityGLTF
             }
 			else if (TryFindCustomBaseColorTexture(materialObj, out var customAlbedoProp))
 			{
+				// IMMERSION: fork addition.
 				// generic fallback for custom shaders: albedo-like texture property by name
 				// (e.g. _Albedo, AlbedoMap, _MainTexture, ColorTexture, _AlbedoTransparency, _DiffuseMap)
 				var mainTex = materialObj.GetTexture(customAlbedoProp);
@@ -447,6 +450,7 @@ namespace UnityGLTF
 	        return id;
         }
 
+		// IMMERSION: fork addition — name matchers for custom shaders.
 		// Generic property-name matching for custom shaders (ShaderGraph/Amplify/hand-written),
 		// so their materials still export albedo and normals without editing every material.
 		// A property matches when its name — leading underscores stripped, case-insensitive —
@@ -840,6 +844,7 @@ namespace UnityGLTF
 				}
 			}
 
+			// IMMERSION: fork addition.
 			// Fallback for custom shaders that are treated as PBR metallic-roughness but name their
 			// albedo differently (_DiffuseMap, _AlbedoTransparency, ...). Without this they export
 			// untextured.
@@ -1156,6 +1161,7 @@ namespace UnityGLTF
 				specularGlossinessTexture
 			);
 
+			// IMMERSION: fork addition.
 			// Fallback for viewers without KHR_materials_pbrSpecularGlossiness support (e.g.
 			// current three.js): approximate as a non-metallic material with roughness derived
 			// from glossiness. Without this, such viewers use the glTF defaults (metallic = 1,

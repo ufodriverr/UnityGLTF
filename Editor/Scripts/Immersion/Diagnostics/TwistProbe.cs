@@ -28,9 +28,9 @@ namespace Immersion.Export
 		{
 			SessionState.SetString(Flag, JsonUtility.ToJson(new Args
 			{
-				avatars = GetArg("-avatars"),
-				controllers = GetArg("-controller"),
-				outDir = GetArg("-out"),
+				avatars = CliArgs.Get("-avatars"),
+				controllers = CliArgs.Get("-controller"),
+				outDir = CliArgs.Get("-out"),
 			}));
 			EditorApplication.EnterPlaymode();
 		}
@@ -54,14 +54,6 @@ namespace Immersion.Export
 			};
 		}
 
-		private static string GetArg(string flag)
-		{
-			var args = Environment.GetCommandLineArgs();
-			for (var i = 0; i < args.Length - 1; i++)
-				if (string.Equals(args[i], flag, StringComparison.OrdinalIgnoreCase))
-					return args[i + 1];
-			return null;
-		}
 	}
 
 	public class TwistProbeRunner : MonoBehaviour

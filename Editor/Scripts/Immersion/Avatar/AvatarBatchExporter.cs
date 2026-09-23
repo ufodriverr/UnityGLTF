@@ -40,15 +40,15 @@ namespace Immersion.Export
 	{
 		public static void ExportAvatars()
 		{
-			var avatars = SplitArg(GetArg("-avatars"));
-			var animatorJsons = SplitArg(GetArg("-animator"));
-			var controllers = SplitArg(GetArg("-controller"));
-			var outDir = GetArg("-out");
+			var avatars = CliArgs.Split(CliArgs.Get("-avatars"));
+			var animatorJsons = CliArgs.Split(CliArgs.Get("-animator"));
+			var controllers = CliArgs.Split(CliArgs.Get("-controller"));
+			var outDir = CliArgs.Get("-out");
 
 			if (avatars.Count == 0 || string.IsNullOrEmpty(outDir))
 			{
 				Debug.LogError("[AvatarBatchExporter] usage: -avatars \"a.prefab;b.prefab\" -out <dir> [-animator \"a.json;b.json\"] [-controller \"a.controller;\"]");
-				Exit(1);
+				CliArgs.Exit(1);
 				return;
 			}
 
@@ -131,7 +131,7 @@ namespace Immersion.Export
 			}
 
 			Debug.Log("[AvatarBatchExporter] done: " + (avatars.Count - failures) + "/" + avatars.Count + " exported to " + outDir);
-			Exit(failures > 0 ? 1 : 0);
+			CliArgs.Exit(failures > 0 ? 1 : 0);
 		}
 
 		// Pose the instance into its AnimatorController's base-layer default state at t=0 (the
@@ -190,27 +190,6 @@ namespace Immersion.Export
 			{
 				animator.enabled = false; // freeze the pose for export
 			}
-		}
-
-		private static string GetArg(string flag)
-		{
-			var args = Environment.GetCommandLineArgs();
-			for (var i = 0; i < args.Length - 1; i++)
-				if (string.Equals(args[i], flag, StringComparison.OrdinalIgnoreCase))
-					return args[i + 1];
-			return null;
-		}
-
-		private static List<string> SplitArg(string value)
-		{
-			return string.IsNullOrEmpty(value)
-				? new List<string>()
-				: value.Split(';').Select(s => s.Trim().Trim('"')).ToList();
-		}
-
-		private static void Exit(int code)
-		{
-			if (Application.isBatchMode) EditorApplication.Exit(code);
 		}
 	}
 }

@@ -393,6 +393,7 @@ namespace UnityGLTF
 			public string uniqueFileName;
 		}
 
+		// IMMERSION: sidecar-file API (loose files next to the GLB), used by the IMMERSION plugins.
 		private struct SidecarFileInfo
 		{
 			public string fileName;
@@ -417,6 +418,7 @@ namespace UnityGLTF
 		private List<ImageInfo> _imageInfos;
 		private HashSet<string> _imageExportPaths;
 		private List<FileInfo> _fileInfos;
+		// IMMERSION: sidecar-file API.
 		private List<SidecarFileInfo> _sidecarFiles;
 		private string _sidecarBaseName;
 		private HashSet<string> _fileNames;
@@ -1360,6 +1362,7 @@ namespace UnityGLTF
 		}
 
 		/// <summary>
+		// IMMERSION: sidecar-file API — SidecarNameToken / SidecarBaseName / AddSidecarFile / WriteSidecarFiles.
 		/// Token that can be used in sidecar file names; it is replaced with the export's base
 		/// file name (without extension) when the files are written.
 		/// </summary>
