@@ -370,8 +370,7 @@ namespace UnityGLTF
 			else if (TryFindCustomBaseColorTexture(materialObj, out var customAlbedoProp))
 			{
 				// generic fallback for custom shaders: albedo-like texture property by name
-				// (e.g. _Albedo, AlbedoMap, _MainTexture, ColorTexture, _AlbedoTransparency,
-				// _DiffuseMap, _CorneaDiffuseMap, _ScleraDiffuseMap for Reallusion eye/hair shaders)
+				// (e.g. _Albedo, AlbedoMap, _MainTexture, ColorTexture, _AlbedoTransparency, _DiffuseMap)
 				var mainTex = materialObj.GetTexture(customAlbedoProp);
 				var baseColor = Color.white;
 				if (TryFindShaderProperty(materialObj, _customColorFactorNames, UnityEngine.Rendering.ShaderPropertyType.Color, out var customColorProp, allowQualifierPrefix: false))
@@ -461,38 +460,14 @@ namespace UnityGLTF
 		// (e.g. Albedo -> AlbedoMap / AlbedoTexture / AlbedoTex / AlbedoTransparency).
 		private static readonly string[] _customTextureSuffixes = { "", "map", "texture", "tex", "transparency" };
 
-		// Explicit, prioritized base-color/diffuse texture properties used by known custom shaders
-		// (e.g. Reallusion RL_* eye/hair/skin/teeth). Checked before the generic name matcher so that
-		// eyes (cornea/sclera) and hair export their albedo instead of coming out untextured.
-		private static readonly string[] _customBaseColorTextureNames =
-		{
-			"_DiffuseMap", "DiffuseMap",
-			// Cornea BEFORE Sclera: on RL_CorneaShaderBasic_* the cornea diffuse is the actual
-			// full eye texture (iris + sclera baked); picking the sclera map exports a blank
-			// white eye. Sclera still matches on shaders that only assign a sclera map.
-			"_CorneaDiffuseMap", "CorneaDiffuseMap",
-			"_ScleraDiffuseMap", "ScleraDiffuseMap",
-			"_AlbedoTransparency", "AlbedoTransparency",
-			"_BaseColorMap", "BaseColorMap"
-		};
-
 		// Finds a base-color/albedo texture for custom shaders that don't use the standard
-		// _MainTex / _BaseMap / _BaseColorTexture names. Prefers the explicit known property names
-		// (with an actual texture assigned), then falls back to the generic name matcher.
+		// _MainTex / _BaseMap / _BaseColorTexture names, by generic name matching. Shader families
+		// that need real per-shader knowledge (the CC/Reallusion avatar shaders) are exported by
+		// the IMMERSION_avatar_materials plugin instead and never reach this fallback.
 		private bool TryFindCustomBaseColorTexture(Material material, out string propertyName)
 		{
 			propertyName = null;
 			if (!material) return false;
-
-			foreach (var name in _customBaseColorTextureNames)
-			{
-				if (material.HasProperty(name) && material.GetTexture(name))
-				{
-					propertyName = name;
-					return true;
-				}
-			}
-
 			return TryFindShaderProperty(material, _customAlbedoNames, ShaderPropertyType.Texture, out propertyName);
 		}
 
@@ -865,10 +840,9 @@ namespace UnityGLTF
 				}
 			}
 
-			// Fallback for custom shaders (e.g. Reallusion RL_* eye/hair/skin/teeth) that are treated
-			// as PBR metallic-roughness but name their albedo differently (_CorneaDiffuseMap,
-			// _ScleraDiffuseMap, _DiffuseMap, _AlbedoTransparency, ...). Without this, eyes and hair
-			// export untextured.
+			// Fallback for custom shaders that are treated as PBR metallic-roughness but name their
+			// albedo differently (_DiffuseMap, _AlbedoTransparency, ...). Without this they export
+			// untextured.
 			if (pbr.BaseColorTexture == null && TryFindCustomBaseColorTexture(material, out var customBaseColorProp))
 			{
 				var customBaseColorTex = material.GetTexture(customBaseColorProp);
