@@ -8,7 +8,11 @@ namespace UnityGLTF.Plugins
 	public class MaterialExtensionsExport: GLTFExportPlugin
 	{
 		public bool KHR_materials_ior = true;
-		public bool KHR_materials_transmission = true;
+		// IMMERSION: off by default. The "alpha blend with preserved specular" path writes
+		// transmissionFactor = 1 - alpha (+ ior 1), which turns URP transparent materials such as
+		// the CC eye-occlusion/tearline shells into invisible glass in three.js. Nothing on the
+		// web side reads glTF transmission (Revolution glass goes through extras.customShader).
+		public bool KHR_materials_transmission = false;
 		public bool KHR_materials_volume = true;
 		public bool KHR_materials_iridescence = true;
 		public bool KHR_materials_specular = true;

@@ -147,8 +147,6 @@ public class GltfCustomDataExporter : GLTFExportPluginContext
             (name, tex) => name == "_BumpMap" || name == "_DetailNormalMap"
                 ? NormalMapBlitExporter.DecodeNormalToTexture2D(tex, flipGreen: true)
                 : tex);
-
-        Debug.Log("Adding custom shader " + material.name);
     }
     
     private void ExportGlassLitGi(GLTFSceneExporter exporter, Material material, JObject extras)
@@ -158,10 +156,7 @@ public class GltfCustomDataExporter : GLTFExportPluginContext
             ["shader"] = "glass",
             ["roughness"] = material.GetFloat("_Roughness"),
             ["reflectionStrength"] = material.GetFloat("_ReflectionStrength"),
-            
         };
-
-        Debug.Log("Adding custom shader " + material.name);
     }
 
     private void ExportHairShader(GLTFSceneExporter exporter, Material material, JObject extras)
@@ -184,8 +179,6 @@ public class GltfCustomDataExporter : GLTFExportPluginContext
         CollectAndExportTextures(
             exporter, material, extras,
             new[] { "_HairIdMap", "_HairAoMap" });
-
-        Debug.Log("Adding custom shader " + material.name);
     }
 
     /// <summary>
@@ -228,8 +221,6 @@ public class GltfCustomDataExporter : GLTFExportPluginContext
     {
         Renderer renderer = transform.GetComponent<Renderer>();
 
-        if (node.Mesh != null && renderer == null) Debug.Log("No renderer on " + transform.name);
-
         if (renderer != null)
         {
             bool hasLightmap = renderer.lightmapIndex != -1;
@@ -257,27 +248,15 @@ public class GltfCustomDataExporter : GLTFExportPluginContext
                 }
             }
             
+            // One customData per renderer node. (Until 2026-09 this also stamped the PARENT's
+            // lm_index / tiling onto every child node — sharing the parent's extras object and
+            // running after the children's own AfterNodeExport, so a nested renderer lost its
+            // own lightmap binding and its reflection_probe_texture. Every renderer transform
+            // gets its own callback; nothing needs propagating.)
             var extras = node.Extras as JObject ?? new JObject();
             extras["customData"] = new JObject { ["lm_index"] = lightmapIndex, ["lm_uv_scale_offset"] = lmScaleOffsetJson, ["reflection_probe_texture"] = reflectionProbeTexture };
 
             node.Extras = extras;
-
-            var children = node.Children;
-            if (children != null) Debug.Log(node.Children.Count);
-            children?.ForEach(child =>
-            {
-                Debug.Log("Adding custom data to child node");
-                var childNode = child.Value;
-                if (childNode != null)
-                {
-                    extras = node.Extras as JObject ?? new JObject();
-
-
-                    extras["customData"] = new JObject { ["lm_index"] = lightmapIndex, ["lm_uv_scale_offset"] = lmScaleOffsetJson, };
-
-                    childNode.Extras = extras;
-                }
-            });
         }
 
         ReflectionProbe rp = transform.GetComponent<ReflectionProbe>();

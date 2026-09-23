@@ -22,25 +22,9 @@ namespace UnityGLTF.Plugins
 	/// the lossless RGBM8 sidecar <c>&lt;exportName&gt;_Lightmap-&lt;i&gt;_RGBM8.png</c> written by
 	/// the Immersion custom-data plugin (see <see cref="ImmersionLightmapPages"/>) — that is the
 	/// page the <c>Immersion/Web/*</c> shaders sample and the one this plugin's extensions name.
-	/// The legacy tone-curve LDR sidecar (<c>&lt;exportName&gt;_Lightmap-&lt;i&gt;.png</c>) is no
-	/// longer written; with <see cref="embedTexturesInGlb"/> enabled that clamped LDR decode is
-	/// still available as a regular embedded glTF texture for non-Immersion consumers.
 	/// </summary>
 	public class LightmapExport : GLTFExportPlugin
 	{
-		[SerializeField]
-		[Range(0.01f, 1f)]
-		[Tooltip("Resolution scale for the LDR lightmap copies embedded by 'Embed Textures In Glb' (1 = full bake resolution). Only used when that toggle is on - the RGBM8 lightmap sidecars are always full bake resolution.")]
-		private float lightmapTextureScale = 1f;
-
-		[SerializeField]
-		[Tooltip("Optional hard cap on the largest embedded lightmap dimension, in pixels. 0 = no cap. Only used with 'Embed Textures In Glb'; the RGBM8 sidecars are never capped.")]
-		private int lightmapMaxTextureSize = 0;
-
-		[SerializeField]
-		[Tooltip("Also embed a clamped LDR copy of every lightmap as a regular glTF texture, for non-Immersion consumers. Increases file size; the Immersion web editor and runtime read the '<name>_Lightmap-<i>_RGBM8.png' sidecars instead.")]
-		private bool embedTexturesInGlb = false;
-
 		public override string DisplayName => "IMMERSION_lightmaps";
 
 		public override string Description =>
@@ -52,7 +36,7 @@ namespace UnityGLTF.Plugins
 
 		public override GLTFExportPluginContext CreateInstance(ExportContext context)
 		{
-			return new LightmapExportContext(context, embedTexturesInGlb, lightmapTextureScale, lightmapMaxTextureSize);
+			return new LightmapExportContext();
 		}
 	}
 
@@ -205,38 +189,17 @@ namespace UnityGLTF.Plugins
 			public Vector4 ScaleOffset;
 		}
 
-		private readonly bool _embedTextures;
-		private readonly float _textureScale;
-		private readonly int _maxTextureSize;
 		private readonly List<LightmappedNode> _nodes = new List<LightmappedNode>();
 		private readonly HashSet<int> _usedIndices = new HashSet<int>();
 		// LightmapSettings.lightmaps returns a fresh array copy on every access, so cache it
 		private LightmapData[] _lightmaps;
 		private LightmapData[] Lightmaps => _lightmaps ?? (_lightmaps = LightmapSettings.lightmaps);
 
-		public LightmapExportContext(ExportContext context, bool embedTextures, float textureScale, int maxTextureSize)
-		{
-			_embedTextures = embedTextures;
-			_textureScale = textureScale;
-			_maxTextureSize = maxTextureSize;
-		}
-
 		public override void BeforeSceneExport(GLTFSceneExporter exporter, GLTFRoot gltfRoot)
 		{
-			LightingExportUtils.ReleaseTexturesFromPreviousExports();
 			// Also reset here (not just in the custom-data plugin) so a disabled custom-data plugin
 			// can't leak a previous export's RGBM page list into this one.
 			ImmersionLightmapPages.Reset();
-		}
-
-		public override void BeforeTextureExport(GLTFSceneExporter exporter, ref GLTFSceneExporter.UniqueTexture texture, string textureSlot)
-		{
-			// lighting textures are pre-scaled to the target resolution; don't scale them twice
-			if (LightingExportUtils.IsLightingTexture(texture.Texture))
-			{
-				texture.Scale = 1f;
-				texture.MaxSize = 0;
-			}
 		}
 
 		public override void AfterNodeExport(GLTFSceneExporter exporter, GLTFRoot gltfRoot, Transform transform, Node node)
@@ -265,8 +228,6 @@ namespace UnityGLTF.Plugins
 		{
 			if (_nodes.Count == 0) return;
 
-			var lightmaps = Lightmaps;
-			var textureIds = new Dictionary<int, int>();  // lightmapIndex -> glTF texture (when embedding)
 			var fileNames = new Dictionary<int, string>(); // lightmapIndex -> RGBM8 page file name (resolved)
 			var lightmapsArr = new JArray();               // for the glTF root extension
 			var manifestLightmaps = new JArray();          // for the sidecar offsets JSON
@@ -291,23 +252,7 @@ namespace UnityGLTF.Plugins
 					["colorName"] = GLTFSceneExporter.SidecarNameToken + "_" + baseName,
 				});
 
-				var entry = new JObject { ["lightmapIndex"] = index, ["image"] = fileName };
-				if (_embedTextures)
-				{
-					// Optional convenience copy for non-Immersion consumers only: the clamped LDR
-					// decode (Photopea curve, see UnityGLTFLightmapDecode.shader), scaled/capped by
-					// this plugin's own settings. Nothing in the Immersion pipeline reads it.
-					var ldr = LightingExportUtils.DecodeLightmapToLDR(lightmaps[index].lightmapColor, baseName, _textureScale, _maxTextureSize);
-					var id = ldr == null
-						? null
-						: exporter.ExportTexture(ldr, GLTFSceneExporter.TextureMapType.sRGB, LightingExportUtils.PngExportSettings);
-					if (id != null)
-					{
-						textureIds[index] = id.Id;
-						entry["texture"] = id.Id;
-					}
-				}
-				lightmapsArr.Add(entry);
+				lightmapsArr.Add(new JObject { ["lightmapIndex"] = index, ["image"] = fileName });
 			}
 
 			if (fileNames.Count == 0) return;
@@ -352,8 +297,6 @@ namespace UnityGLTF.Plugins
 					// in so the sample coordinate is just: uv * xy + zw (with flipY = false textures)
 					["scaleOffsetGltf"] = new JArray(so.x, so.y, so.z, 1f - so.y - so.w),
 				};
-				if (textureIds.TryGetValue(entry.LightmapIndex, out var texId))
-					ext["texture"] = texId;
 				entry.Node.AddExtension(IMMERSION_lightmap.EXTENSION_NAME, new IMMERSION_lightmap(ext));
 			}
 

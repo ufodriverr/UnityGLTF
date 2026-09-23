@@ -16,7 +16,7 @@ namespace Immersion.Export
 	/// "UnityGLTF → Export active scene" menu item. Each scene is opened (Single mode, so its
 	/// baked LightingData binds), every root GameObject is exported into one GLB named after
 	/// the scene, and the IMMERSION export plugins emit their usual sidecars next to it
-	/// (lightmap pages + offsets JSON, reflection-probe strip, scene-settings skybox).
+	/// (RGBM8 lightmap pages + offsets JSON, reflection strip).
 	///
 	/// Usage:
 	/// <code>
@@ -53,6 +53,7 @@ namespace Immersion.Export
 			// can lose its plugin sub-assets in batch mode, silently disabling every export
 			// plugin — GetDefaultSettings() sidesteps that (same as AvatarBatchExporter).
 			var settings = GLTFSettings.GetDefaultSettings();
+			ImmersionExportSettings.ApplyDefaults(settings, isObjectExport: false);
 
 			var failures = 0;
 			foreach (var scenePath in scenePaths)
@@ -73,8 +74,8 @@ namespace Immersion.Export
 
 					// Any loose file the export plugins wrote for this scene: one RGBM8 lightmap
 					// page per lightmap (<scene>_Lightmap-<i>_RGBM8.png — these hold the lighting,
-					// the GLB only carries 4x4 black placeholders; there is no LDR page any more),
-					// the lightmap offsets JSON, the reflection strip and the skybox.
+					// the GLB only carries 4x4 black placeholders), the lightmap offsets JSON and
+					// the reflection strip.
 					var sidecars = Directory.GetFiles(outDir)
 						.Select(Path.GetFileName)
 						.Where(f => f.StartsWith(scene.name + "_", StringComparison.Ordinal))

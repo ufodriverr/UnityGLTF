@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using GLTF.Schema;
-using Newtonsoft.Json.Linq;
 using UnityEngine;
 
 namespace UnityGLTF.Plugins
@@ -17,9 +16,8 @@ namespace UnityGLTF.Plugins
 	/// have a skybox, the skybox is baked into the reflection atlas instead, so the scene still
 	/// gets an environment in the editor.
 	///
-	/// Every probe node also gets a <see cref="IMMERSION_reflection_probe"/> extension with the
-	/// probe's metadata (box projection, center/size, intensity, blend distance). With
-	/// <see cref="embedTexturesInGlb"/> enabled the atlases are also embedded as glTF textures.
+	/// The per-renderer probe binding and the per-probe equirect the Revolution shaders use come
+	/// from the Gltf Custom Shaders Export plugin (<c>extras.customData</c>), not from here.
 	/// </summary>
 	public class ReflectionProbeExport : GLTFExportPlugin
 	{
@@ -27,22 +25,25 @@ namespace UnityGLTF.Plugins
 		[Tooltip("Maximum face size of the exported cube atlas, in pixels (atlas width = 6x this). The probe's own resolution is used when smaller.")]
 		private int maxFaceSize = 512;
 
-		[SerializeField]
-		[Tooltip("Also embed the reflection atlases as glTF textures inside the exported file. Increases file size; the Immersion web editor only reads the sidecar PNG.")]
-		private bool embedTexturesInGlb = false;
+		/// <summary>
+		/// Write the skybox into <c>&lt;name&gt;_reflection.png</c> when the export has no usable
+		/// baked probe. Scene exports want this; object exports (avatars) do not — the
+		/// <c>Immersion.Export.AvatarBatchExporter</c> turns it off so an avatar GLB is not
+		/// accompanied by a strip of the empty scene's procedural sky.
+		/// </summary>
+		public bool skyboxFallback = true;
 
 		public override string DisplayName => "IMMERSION_reflection_probes";
 
 		public override string Description =>
 			"Exports the main ReflectionProbe (or the skybox as fallback) as a 6x1 cube-face " +
-			"atlas PNG next to the exported file (Immersion web editor format), plus probe " +
-			"metadata extensions on the probe nodes.";
+			"atlas PNG next to the exported file (Immersion web editor format).";
 
 		public override bool EnabledByDefault => true;
 
 		public override GLTFExportPluginContext CreateInstance(ExportContext context)
 		{
-			return new ReflectionProbeExportContext(context, maxFaceSize, embedTexturesInGlb);
+			return new ReflectionProbeExportContext(maxFaceSize, skyboxFallback);
 		}
 	}
 
@@ -50,16 +51,14 @@ namespace UnityGLTF.Plugins
 	{
 		private const string SidecarFileName = GLTFSceneExporter.SidecarNameToken + "_reflection.png";
 
-		private readonly ExportContext _context;
 		private readonly int _maxFaceSize;
-		private readonly bool _embedTextures;
-		private readonly List<(ReflectionProbe probe, Node node)> _probes = new List<(ReflectionProbe, Node)>();
+		private readonly bool _skyboxFallback;
+		private readonly List<ReflectionProbe> _probes = new List<ReflectionProbe>();
 
-		public ReflectionProbeExportContext(ExportContext context, int maxFaceSize, bool embedTextures)
+		public ReflectionProbeExportContext(int maxFaceSize, bool skyboxFallback)
 		{
-			_context = context;
 			_maxFaceSize = Mathf.Max(16, maxFaceSize);
-			_embedTextures = embedTextures;
+			_skyboxFallback = skyboxFallback;
 		}
 
 		public override void BeforeSceneExport(GLTFSceneExporter exporter, GLTFRoot gltfRoot)
@@ -67,86 +66,35 @@ namespace UnityGLTF.Plugins
 			LightingExportUtils.ReleaseTexturesFromPreviousExports();
 		}
 
-		public override void BeforeTextureExport(GLTFSceneExporter exporter, ref GLTFSceneExporter.UniqueTexture texture, string textureSlot)
-		{
-			// lighting textures are pre-scaled to the target resolution; scaling the atlas again
-			// would break the editor's width-divisible-by-6 requirement
-			if (LightingExportUtils.IsLightingTexture(texture.Texture))
-			{
-				texture.Scale = 1f;
-				texture.MaxSize = 0;
-			}
-		}
-
 		public override void AfterNodeExport(GLTFSceneExporter exporter, GLTFRoot gltfRoot, Transform transform, Node node)
 		{
 			if (transform.TryGetComponent<ReflectionProbe>(out var probe) && probe.enabled)
-				_probes.Add((probe, node));
+				_probes.Add(probe);
 		}
 
 		public override void AfterSceneExport(GLTFSceneExporter exporter, GLTFRoot gltfRoot)
 		{
+			foreach (var probe in _probes)
+			{
+				if (!GetProbeTexture(probe))
+					Debug.LogWarning($"ReflectionProbe '{probe.name}' has no baked texture and was skipped. Bake lighting before exporting.", probe);
+			}
+
 			// the editor uses a single environment map; the most important probe wins the sidecar
 			var mainProbe = _probes
-				.Where(p => GetProbeTexture(p.probe))
-				.OrderByDescending(p => p.probe.importance)
-				.ThenByDescending(p => p.probe.size.x * p.probe.size.y * p.probe.size.z)
-				.Select(p => p.probe)
+				.Where(p => GetProbeTexture(p))
+				.OrderByDescending(p => p.importance)
+				.ThenByDescending(p => p.size.x * p.size.y * p.size.z)
 				.FirstOrDefault();
 
-			var exportedAny = false;
-			foreach (var (probe, node) in _probes)
+			if (mainProbe != null)
 			{
-				var cubemap = GetProbeTexture(probe);
-				if (!cubemap)
-				{
-					Debug.LogWarning($"ReflectionProbe '{probe.name}' has no baked texture and was skipped. Bake lighting before exporting.", probe);
-					continue;
-				}
-
-				// non-main probes only need their atlas when it gets embedded in the glTF
-				Texture2D atlas = null;
-				if (probe == mainProbe || _embedTextures)
-				{
-					atlas = LightingExportUtils.CubemapToFaceAtlas(cubemap, probe.textureHDRDecodeValues, GetFaceSize(cubemap), $"Reflection-{probe.name}");
-					if (atlas == null) continue;
-				}
-
-				if (probe == mainProbe && atlas != null)
+				var cubemap = GetProbeTexture(mainProbe);
+				var atlas = LightingExportUtils.CubemapToFaceAtlas(cubemap, mainProbe.textureHDRDecodeValues, GetFaceSize(cubemap), $"Reflection-{mainProbe.name}");
+				if (atlas != null)
 					exporter.AddSidecarFile(SidecarFileName, atlas.EncodeToPNG());
-
-				var center = probe.center;
-				var size = probe.size;
-				var ext = new JObject
-				{
-					["layout"] = "cubeStrip", // 6x1 horizontal, +X,-X,+Y,-Y,+Z,-Z
-					["main"] = probe == mainProbe,
-					["boxProjection"] = probe.boxProjection,
-					// X is mirrored between Unity and glTF, same conversion as mesh/node positions
-					["center"] = new JArray(-center.x, center.y, center.z),
-					["size"] = new JArray(size.x, size.y, size.z),
-					["intensity"] = probe.intensity,
-					["blendDistance"] = probe.blendDistance,
-					["importance"] = probe.importance,
-					["mode"] = probe.mode.ToString(),
-				};
-				if (probe == mainProbe)
-					ext["image"] = SidecarFileName;
-				if (_embedTextures && atlas != null)
-				{
-					var id = exporter.ExportTexture(atlas, GLTFSceneExporter.TextureMapType.sRGB, LightingExportUtils.PngExportSettings);
-					if (id != null) ext["texture"] = id.Id;
-				}
-
-				node.AddExtension(IMMERSION_reflection_probe.EXTENSION_NAME, new IMMERSION_reflection_probe(ext));
-				exportedAny = true;
 			}
-
-			if (exportedAny)
-			{
-				exporter.DeclareExtensionUsage(IMMERSION_reflection_probe.EXTENSION_NAME, false);
-			}
-			else
+			else if (_skyboxFallback)
 			{
 				// no usable probes — bake the skybox into the reflection atlas instead, so the
 				// scene still gets an environment map in the web editor
@@ -175,10 +123,7 @@ namespace UnityGLTF.Plugins
 
 		private int GetFaceSize(Texture cubemap)
 		{
-			var face = Mathf.Min(cubemap.width, _maxFaceSize);
-			// respect the global texture scale/cap (applied per face; the exporter-side scaling is
-			// disabled for these in BeforeTextureExport)
-			return LightingExportUtils.ScaledSize(face, face, _context.settings).x;
+			return Mathf.Min(cubemap.width, _maxFaceSize);
 		}
 	}
 }

@@ -447,33 +447,17 @@ namespace UnityGLTF
 		{
 			public Texture Texture;
 			public int MaxSize;
-			// Uniform scale factor (0..1) applied to the exported resolution. 1 = full size.
-			public float Scale;
 			// additional settings that make exporting a texture unique
 			public TextureExportSettings ExportSettings;
 
-			public int GetWidth() => ScaledDimension(Texture.width);
-			public int GetHeight() => ScaledDimension(Texture.height);
-
-			// Scales a dimension proportionally (preserving aspect ratio), then clamps to MaxSize if it caps the largest side.
-			private int ScaledDimension(int dimension)
-			{
-				var factor = Scale <= 0f ? 1f : Scale;
-				var maxDimension = Mathf.Max(Texture.width, Texture.height);
-				if (MaxSize > 0 && maxDimension * factor > MaxSize)
-					factor = MaxSize / (float) maxDimension;
-				return Mathf.Max(1, Mathf.RoundToInt(dimension * factor));
-			}
-
-			// True if the export resolution is smaller than the source (so exporting raw bytes from disk isn't valid).
-			public bool IsScaled() => GetWidth() < Texture.width || GetHeight() < Texture.height;
+			public int GetWidth() => Mathf.Min(MaxSize, Texture.width);
+			public int GetHeight() => Mathf.Min(MaxSize, Texture.height);
 
 			public UniqueTexture(Texture tex, string textureSlot, GLTFSceneExporter exporter)
 			{
 				Texture = tex;
 				ExportSettings = exporter.GetExportSettingsForSlot(textureSlot);
 				MaxSize = Mathf.Max(tex.width, tex.height);
-				Scale = 1f;
 			}
 
 			public UniqueTexture(Texture tex, TextureExportSettings exportSettings)
@@ -481,12 +465,11 @@ namespace UnityGLTF
 				Texture = tex;
 				ExportSettings = exportSettings;
 				MaxSize = Mathf.Max(tex.width, tex.height);
-				Scale = 1f;
 			}
 
 			public bool Equals(UniqueTexture other)
 			{
-				return Equals(Texture, other.Texture) && MaxSize == other.MaxSize && Scale.Equals(other.Scale) && ExportSettings == other.ExportSettings;
+				return Equals(Texture, other.Texture) && MaxSize == other.MaxSize && ExportSettings == other.ExportSettings;
 			}
 
 			public override bool Equals(object obj)
@@ -510,7 +493,6 @@ namespace UnityGLTF
 					#endif
 					hashCode = (hashCode * 397) ^ ExportSettings.GetHashCode();
 					hashCode = (hashCode * 397) ^ MaxSize;
-					hashCode = (hashCode * 397) ^ Scale.GetHashCode();
 					return hashCode;
 				}
 			}

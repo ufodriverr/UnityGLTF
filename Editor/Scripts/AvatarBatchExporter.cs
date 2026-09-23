@@ -6,7 +6,6 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEditor.SceneManagement;
 using UnityEngine;
-using UnityEngine.Playables;
 using UnityGLTF;
 using UnityGLTF.Plugins;
 
@@ -62,15 +61,7 @@ namespace Immersion.Export
 			// export plugins on the next run — GetDefaultSettings() sidesteps that entirely.
 			var settings = GLTFSettings.GetDefaultSettings();
 			settings.ExportAnimations = true;
-
-			// DefaultPoseExport re-poses skeletons to the BIND pose (T-pose, splayed hands)
-			// before export. Bones a clip doesn't drive (fingers in most clips, the whole body
-			// in face-capture clips) bake static tracks from the CURRENT pose, so with the
-			// plugin on they freeze in T-pose — visibly broken hands/arms on the web. We pose
-			// each avatar into its controller's default state instead (below), so the plugin
-			// must not undo that.
-			foreach (var plugin in settings.ExportPlugins)
-				if (plugin is DefaultPoseExport) plugin.Enabled = false;
+			ImmersionExportSettings.ApplyDefaults(settings, isObjectExport: true);
 
 			var failures = 0;
 			for (var i = 0; i < avatars.Count; i++)
@@ -145,11 +136,11 @@ namespace Immersion.Export
 
 		// Pose the instance into its AnimatorController's base-layer default state at t=0 (the
 		// natural pose the module shows). The exported rest pose AND every static baked track
-		// (fingers, face-clip body holds) then match the manual in-scene exports instead of the
-		// raw T-pose prefab. Humanoid clips carry muscle curves, so plain SampleAnimationClip is
-		// a no-op — sample through a PlayableGraph bound to the Animator, exactly like
-		// ExporterAnimationHumanoid does, snapshot the pose, and re-apply it after AnimationMode
-		// restores the original.
+		// (bones a clip does not drive — fingers in most clips, the whole body in face-capture
+		// clips — are baked as constant curves from the CURRENT pose by UnityGLTF's
+		// GenerateMissingCurves) then match the in-scene look instead of the raw T-pose prefab.
+		// Humanoid clips carry muscle curves, so plain SampleAnimationClip is a no-op — the
+		// Animator itself is driven (Play + Update) and the pose frozen for the export.
 		private static void PoseToDefaultState(GameObject instance)
 		{
 			var animator = instance.GetComponentInChildren<Animator>(true);
@@ -192,8 +183,6 @@ namespace Immersion.Export
 					handler.GetHumanPose(ref humanPose);
 					handler.SetHumanPose(ref humanPose);
 					handler.Dispose();
-					var probe = FindDeep(animator.transform, "CC_Base_L_ForearmTwist01");
-					if (probe) Debug.Log("[AvatarBatchExporter] twist probe L_ForearmTwist01 localRotation = " + probe.localRotation.ToString("F4"));
 				}
 				Debug.Log("[AvatarBatchExporter] posed '" + instance.name + "' to default state '" + defaultState.name + "' (clip '" + clip.name + "' @0s, HumanPose round-trip).");
 			}
@@ -201,13 +190,6 @@ namespace Immersion.Export
 			{
 				animator.enabled = false; // freeze the pose for export
 			}
-		}
-
-		private static Transform FindDeep(Transform root, string name)
-		{
-			foreach (var t in root.GetComponentsInChildren<Transform>(true))
-				if (t.name == name) return t;
-			return null;
 		}
 
 		private static string GetArg(string flag)

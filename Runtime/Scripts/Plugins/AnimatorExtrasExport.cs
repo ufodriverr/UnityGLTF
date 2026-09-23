@@ -9,10 +9,8 @@ namespace UnityGLTF.Plugins
 	/// <c>extras.IMMERSION_animator</c>.
 	///
 	/// This is the flattened, web-runtime-ready animator description (masks + controller in the
-	/// Immersion editor's <c>AnimSettingsJson</c> shape) — distinct from
-	/// <see cref="AnimatorControllerExport"/>, which dumps the full Unity state-machine graph as a
-	/// root-level extension. three.js's GLTFLoader copies scene extras onto
-	/// <c>gltf.scene.userData</c> automatically, so the web side picks
+	/// Immersion editor's <c>AnimSettingsJson</c> shape). three.js's GLTFLoader copies scene
+	/// extras onto <c>gltf.scene.userData</c> automatically, so the web side picks
 	/// <c>userData.IMMERSION_animator</c> up with zero loader changes.
 	///
 	/// The payload is deliberately NOT derived from the AnimatorController: flattening Unity's

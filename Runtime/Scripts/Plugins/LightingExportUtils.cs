@@ -1,25 +1,16 @@
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.Experimental.Rendering;
 using UnityEngine.Rendering;
 
 namespace UnityGLTF.Plugins
 {
 	/// <summary>
-	/// Shared helpers for the IMMERSION lighting export plugins (lightmaps, reflection probes,
-	/// skybox). Converts Unity's HDR lighting textures to plain LDR textures so they can be
-	/// exported as standard PNGs through the regular texture pipeline — which also means the
-	/// global ExportTextureScale / ExportMaxTextureSize settings apply to them.
-	///
-	/// Encoding: reflections/skybox use hardware sRGB; lightmaps use the Photopea curve (see
-	/// DecodeLightmapToLDR / UnityGLTFLightmapDecode.shader). Values above 1.0 (very bright
-	/// light) are clamped in both paths.
+	/// Shared helpers for the IMMERSION reflection-strip export: flattens a cubemap (baked probe
+	/// or the skybox) into a clamped LDR sRGB 6x1 face atlas. Lightmap pages do NOT go through
+	/// here — they ship unclamped as RGBM8 sidecars (see <c>GltfCustomDataExporter</c>).
 	/// </summary>
 	internal static class LightingExportUtils
 	{
-		private static Material _lightmapDecodeMaterial;
-		private static Material _cubemapToEquirectMaterial;
-
 		// The exporter holds references to these textures until the output file is written, and
 		// there is no plugin callback after that point — so they're kept alive here and destroyed
 		// at the start of the next export (see ReleaseTexturesFromPreviousExports).
@@ -48,26 +39,6 @@ namespace UnityGLTF.Plugins
 			return new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
 		}
 
-		private static Material LightmapDecodeMaterial
-		{
-			get
-			{
-				if (!_lightmapDecodeMaterial)
-					_lightmapDecodeMaterial = LoadBlitMaterial("UnityGLTFLightmapDecode");
-				return _lightmapDecodeMaterial;
-			}
-		}
-
-		private static Material CubemapToEquirectMaterial
-		{
-			get
-			{
-				if (!_cubemapToEquirectMaterial)
-					_cubemapToEquirectMaterial = LoadBlitMaterial("UnityGLTFCubemapToEquirect");
-				return _cubemapToEquirectMaterial;
-			}
-		}
-
 		private static Material _cubemapToFacesMaterial;
 		private static Material CubemapToFacesMaterial
 		{
@@ -77,91 +48,6 @@ namespace UnityGLTF.Plugins
 					_cubemapToFacesMaterial = LoadBlitMaterial("UnityGLTFCubemapToFaces");
 				return _cubemapToFacesMaterial;
 			}
-		}
-
-		/// <summary>True for textures created by these helpers during the current export.</summary>
-		public static bool IsLightingTexture(Texture texture)
-		{
-			return texture is Texture2D tex2D && _exportedTextures.Contains(tex2D);
-		}
-
-		/// <summary>
-		/// Applies the global ExportTextureScale / ExportMaxTextureSize to a dimension pair, same
-		/// math as UniqueTexture.ScaledDimension. Lighting textures are pre-scaled with this (and
-		/// then excluded from the exporter's own scaling), so the sidecar PNGs match the GLB.
-		/// </summary>
-		public static Vector2Int ScaledSize(int width, int height, GLTFSettings settings)
-		{
-			return ScaledSize(width, height, settings.ExportTextureScale, settings.ExportMaxTextureSize);
-		}
-
-		/// <summary>Same scaling math with explicit factors (scale 0.01-1, maxSize 0 = no cap).</summary>
-		public static Vector2Int ScaledSize(int width, int height, float scale, int maxSize)
-		{
-			var factor = Mathf.Clamp(scale, 0.01f, 1f);
-			var maxDimension = Mathf.Max(width, height);
-			if (maxSize > 0 && maxDimension * factor > maxSize)
-				factor = maxSize / (float)maxDimension;
-			return new Vector2Int(Mathf.Max(1, Mathf.RoundToInt(width * factor)), Mathf.Max(1, Mathf.RoundToInt(height * factor)));
-		}
-
-		/// <summary>Texture export settings that force PNG output (alpha kept), sRGB, no channel conversion.</summary>
-		public static GLTFSceneExporter.TextureExportSettings PngExportSettings
-		{
-			get
-			{
-				var settings = new GLTFSceneExporter.TextureExportSettings();
-				settings.isValid = true;
-				settings.alphaMode = GLTFSceneExporter.TextureExportSettings.AlphaMode.Always;
-				settings.linear = false;
-				settings.conversion = GLTFSceneExporter.TextureExportSettings.Conversion.None;
-				return settings;
-			}
-		}
-
-		/// <summary>
-		/// Decodes a baked lightmap (raw HDR like BC6H/half-float, or RGBM-encoded) to a clamped
-		/// LDR Texture2D, ready for PNG export. The LDR encoding is NOT the exact sRGB formula:
-		/// the decode shader applies the "Photopea curve" (sRGB sampled at 17 knots, linearly
-		/// interpolated), which is darker in the toe and matches the reference manual HDR->PNG
-		/// conversions — with hardware sRGB encoding the web scene renders visibly lighter than
-		/// Unity in dark areas (531 lightmap fix, 2026-08-27). The blit target is therefore
-		/// LINEAR: the shader output already holds the final encoded bytes.
-		/// </summary>
-		public static Texture2D DecodeLightmapToLDR(Texture2D lightmap, string name, float scale, int maxSize)
-		{
-			var mat = LightmapDecodeMaterial;
-			if (!mat) return null;
-			// Raw HDR formats (BC6H / float, "High Quality" encoding) already hold linear radiance.
-			// LDR formats with alpha are RGBM ("Normal Quality"), without alpha dLDR ("Low Quality").
-			// The decode instructions match Unity's DecodeLightmap for the active color space.
-			var isRawHdr = GraphicsFormatUtility.IsHDRFormat(lightmap.graphicsFormat);
-			var isRgbm = GraphicsFormatUtility.HasAlphaChannel(lightmap.graphicsFormat);
-			var linearSpace = QualitySettings.activeColorSpace == ColorSpace.Linear;
-			mat.SetFloat("_Mode", isRawHdr ? 0f : 1f);
-			mat.SetVector("_Decode", isRgbm
-				? (linearSpace ? new Vector4(34.493242f, 2.2f, 0f, 0f) : new Vector4(5f, 1f, 0f, 0f))   // pow(5, 2.2)
-				: (linearSpace ? new Vector4(4.59479f, 1f, 0f, 0f) : new Vector4(2f, 1f, 0f, 0f)));     // pow(2, 2.2)
-			var size = ScaledSize(lightmap.width, lightmap.height, scale, maxSize);
-			return BlitToLDRTexture(lightmap, size.x, size.y, mat, name, TextureWrapMode.Clamp, srgbTarget: false);
-		}
-
-		/// <summary>
-		/// Flattens a cubemap into an equirectangular (2:1) clamped LDR sRGB Texture2D, applying
-		/// Unity's HDR decode instructions (pass <c>probe.textureHDRDecodeValues</c>, or
-		/// <c>Vector4(1,1,0,0)</c> for raw linear render targets).
-		/// </summary>
-		public static Texture2D CubemapToEquirect(Texture cubemap, Vector4 hdrDecodeValues, int width, string name)
-		{
-			var mat = CubemapToEquirectMaterial;
-			if (!mat) return null;
-			mat.SetTexture("_CubeTex", cubemap);
-			mat.SetVector("_Decode", hdrDecodeValues);
-			mat.SetFloat("_UseDecode", 1f);
-			// Clamp: Unity has a single wrap mode per texture, and vertical Repeat would bleed the
-			// poles into each other under bilinear/PMREM filtering. The cost is a minor seam at
-			// the anti-meridian.
-			return BlitToSRGBTexture(Texture2D.whiteTexture, width, Mathf.Max(1, width / 2), mat, name, TextureWrapMode.Clamp);
 		}
 
 		/// <summary>
@@ -222,23 +108,15 @@ namespace UnityGLTF.Plugins
 			}
 		}
 
+		// Linear shader output; the hardware applies the exact sRGB formula on write.
 		private static Texture2D BlitToSRGBTexture(Texture source, int width, int height, Material material, string name, TextureWrapMode wrapMode)
 		{
-			return BlitToLDRTexture(source, width, height, material, name, wrapMode, srgbTarget: true);
-		}
-
-		// srgbTarget: true = linear shader output, hardware applies the exact sRGB formula on write
-		// (reflections/skybox). false = LINEAR target, the shader output already holds the final
-		// encoded bytes (lightmaps, which use the Photopea curve instead of formula sRGB).
-		private static Texture2D BlitToLDRTexture(Texture source, int width, int height, Material material, string name, TextureWrapMode wrapMode, bool srgbTarget)
-		{
-			var rt = RenderTexture.GetTemporary(width, height, 0, RenderTextureFormat.ARGB32,
-				srgbTarget ? RenderTextureReadWrite.sRGB : RenderTextureReadWrite.Linear);
+			var rt = RenderTexture.GetTemporary(width, height, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
 			var prevActive = RenderTexture.active;
 			var prevSRGB = GL.sRGBWrite;
 			try
 			{
-				GL.sRGBWrite = srgbTarget;
+				GL.sRGBWrite = true;
 				Graphics.Blit(source, rt, material);
 
 				var tex = new Texture2D(width, height, TextureFormat.ARGB32, false, false);
