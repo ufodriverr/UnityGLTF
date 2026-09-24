@@ -34,6 +34,11 @@ namespace Immersion.Export
 	///   are baked into the GLB (UnityGLTF exports the clips referenced by the Animator).
 	/// - <c>-maxTextureSize N</c> / <c>-maxLightmapSize N</c>: optional caps of the Revolution
 	///   plugin (longest side in px); default 0 = full resolution.
+	/// - <c>-logicScene &lt;path&gt;</c>: optional logic scene; each avatar is exported with the
+	///   renderer materials, material-slot count, mesh and enabled state of its INSTANCE in that
+	///   scene instead of the prefab defaults (see <see cref="LogicSceneRendererOverrides"/>).
+	/// - <c>-logicInstances "A;B"</c>: optional instance names in the logic scene, aligned by index
+	///   with -avatars; empty segment = auto (the single instance of the prefab's source asset).
 	///
 	/// Exit code 0 = every avatar exported; 1 = at least one failed (details on stdout, each
 	/// avatar logs a line starting with "[AvatarBatchExporter]").
@@ -49,12 +54,31 @@ namespace Immersion.Export
 
 			if (avatars.Count == 0 || string.IsNullOrEmpty(outDir))
 			{
-				Debug.LogError("[AvatarBatchExporter] usage: -avatars \"a.prefab;b.prefab\" -out <dir> [-animator \"a.json;b.json\"] [-controller \"a.controller;\"]");
+				Debug.LogError("[AvatarBatchExporter] usage: -avatars \"a.prefab;b.prefab\" -out <dir> [-animator \"a.json;b.json\"] [-controller \"a.controller;\"] [-logicScene <scene> [-logicInstances \"A;B\"]]");
 				CliArgs.Exit(1);
 				return;
 			}
 
 			Directory.CreateDirectory(outDir);
+
+			// Logic-scene renderer state is captured BEFORE the empty export scene replaces it.
+			var logicScene = CliArgs.Get("-logicScene");
+			List<LogicSceneRendererOverrides> logicOverrides = null;
+			var failures = 0;
+			if (!string.IsNullOrEmpty(logicScene))
+			{
+				try
+				{
+					logicOverrides = LogicSceneRendererOverrides.Collect(logicScene, avatars, CliArgs.Split(CliArgs.Get("-logicInstances")), out _); // unresolved = null entry, counted as a FAIL below
+				}
+				catch (Exception e)
+				{
+					Debug.LogError("[AvatarBatchExporter] FAIL logic scene '" + logicScene + "': " + e);
+					CliArgs.Exit(1);
+					return;
+				}
+			}
+
 			EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
 			// Fresh in-memory settings with every plugin registered at its EnabledByDefault state.
@@ -70,7 +94,6 @@ namespace Immersion.Export
 				+ ", probe range " + GltfCustomDataExporter.PROBE_RANGE
 				+ ", maxTextureSize " + (maxTextureSize > 0 ? maxTextureSize.ToString() : "unlimited"));
 
-			var failures = 0;
 			for (var i = 0; i < avatars.Count; i++)
 			{
 				var prefabPath = avatars[i];
@@ -83,6 +106,12 @@ namespace Immersion.Export
 
 					instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
 					instance.transform.localPosition = Vector3.zero;
+
+					if (logicOverrides != null)
+					{
+						if (logicOverrides[i] == null) throw new Exception("no logic-scene instance resolved (see above) - not exported with prefab defaults");
+						logicOverrides[i].Apply(instance); // unpacks the instance
+					}
 
 					// Some configured prefabs ship with an INACTIVE root (the module activates
 					// them at runtime — e.g. 531's Lisa.prefab). An inactive root makes the
@@ -98,7 +127,8 @@ namespace Immersion.Export
 						// mid-export — the rig is inactive by the time the curves are written and
 						// every channel is skipped. Unpacking makes the activation plain object
 						// state that survives the undo.
-						PrefabUtility.UnpackPrefabInstance(instance, PrefabUnpackMode.Completely, InteractionMode.AutomatedAction);
+						if (PrefabUtility.IsPartOfPrefabInstance(instance))
+							PrefabUtility.UnpackPrefabInstance(instance, PrefabUnpackMode.Completely, InteractionMode.AutomatedAction);
 						instance.SetActive(true);
 						Debug.Log("[AvatarBatchExporter] unpacked + activated inactive prefab root '" + name + "' before export.");
 					}

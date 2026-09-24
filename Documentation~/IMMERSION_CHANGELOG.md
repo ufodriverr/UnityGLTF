@@ -3,7 +3,23 @@
 Fork-specific history (upstream's `CHANGELOG.md` is left untouched so upstream merges stay
 clean). Current layout and concern map: `IMMERSION.md`; lighting contract: `IMMERSION_lighting.md`.
 
-## 2026-09-24 — integration check fixes (compile NOT verified in this change — batchmode compile before the next export)
+## 2026-09-24 — avatars export with their logic-scene renderer state
+
+- `AvatarBatchExporter -logicScene <scene> [-logicInstances "A;B"]` (`Avatar/LogicSceneRendererOverrides.cs`):
+  each avatar is exported with the renderer materials, material-slot count, mesh and enabled state of
+  its instance in the logic scene instead of the prefab defaults. Instance = the named Animator object
+  (aligned with `-avatars`), else the single instance of the prefab's original source asset (FBX /
+  base prefab); renderers match by original source object, else by hierarchy path. State travels as
+  `GlobalObjectId`s across the switch to the empty export scene; the instance is unpacked before the
+  change (the humanoid sampler's undo pair re-merges prefab instances). Every change is logged as a
+  `submesh[indexCount] -> material` pairing against the prefab's. Why: the ERT prefabs pair the
+  Organica eyes/teeth submesh with `T_EyeOcc` (MetaCoach: OcclusionMask → black eyes on the web)
+  while the logic scene draws it with `T_Organica` and leaves the shell submesh undrawn.
+- `ExporterMeshes.ExportPrimitive` (tagged): a submesh without a material slot is not exported —
+  Unity does not draw it; upstream wrapped the slot index and drew it with slot 0's material.
+- Batchmode compile of `70826523` verified clean (no change needed).
+
+## 2026-09-24 — integration check fixes (compile verified clean afterwards)
 
 - `Bakery/Light` materials (Bakery area-light meshes) export as `KHR_materials_unlit` with
   `_Color · intensity` (linear, clamped to 1): Unity shows them as bright unlit panels; before,
