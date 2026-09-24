@@ -3,7 +3,7 @@ Shader "Hidden/CubemapToEquirect"
     Properties
     {
         _Cube ("Cubemap", Cube) = "" {}
-        _DynamicRange ("Dynamic Range", Range(1.0, 5.0)) = 3.0
+        _DynamicRange ("Dynamic Range", Range(1.0, 16.0)) = 8.0
         // HDR decode instructions of the SOURCE cubemap (ReflectionProbe.textureHDRDecodeValues).
         // Must be passed explicitly: unity_SpecCube0_HDR is only populated during scene
         // rendering with a bound probe — in an editor/export blit it is zero, which made

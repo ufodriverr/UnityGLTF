@@ -6,21 +6,24 @@ namespace GLTF.Schema
 	/// Root-level glTF extension that lists the baked Unity lightmaps exported with the asset.
 	/// Each entry maps a Unity lightmap index to the loose page file that carries its pixels.
 	///
-	/// Payload shape (version 2):
+	/// Payload shape (version 3):
 	/// {
-	///   "version": 2,
-	///   "lightmaps": [ { "lightmapIndex": 0, "image": "Bank_Lightmap-0_RGBM8.png", "texture": 3 }, ... ]
+	///   "version": 3,
+	///   "rgbmRange": 8,
+	///   "lightmaps": [ { "lightmapIndex": 0, "image": "Bank_Lightmap-0_RGBM8.png", "rgbmRange": 8 }, ... ]
 	/// }
 	///
 	/// <c>image</c> is the RESOLVED file name (the <c>{name}</c> sidecar token is already
-	/// substituted) of the page's lossless RGBM8 sidecar PNG — decode <c>hdr = rgb * a * 5</c> in
-	/// linear space; the <c>_RGBM8</c> suffix is how consumers recognise the encoding. Entry order
-	/// follows <c>lightmapIndex</c>, which is also the nodes' <c>extras.customData.lm_index</c>.
-	/// By default the GLB only carries a 4x4 black placeholder page per lightmap (see
-	/// <c>GltfCustomDataExporter</c>), so a consumer that ignores the sidecars renders unlit.
-	/// <c>texture</c> is optional and only present when the IMMERSION_lightmaps plugin's
-	/// "Embed Textures In Glb" toggle added a clamped LDR copy for non-Immersion consumers.
+	/// substituted) of the page's lossless RGBM sidecar PNG — decode <c>hdr = rgb * a * rgbmRange</c>
+	/// in linear space. The <c>_RGBM8</c> suffix is the 8-bit RGBM ENCODING marker consumers
+	/// recognise the page by; it does NOT state the range, which is why <c>rgbmRange</c> travels in
+	/// the payload (root + per entry). Entry order follows <c>lightmapIndex</c>, which is also the
+	/// nodes' <c>extras.customData.lm_index</c>. By default the GLB only carries a 4x4 black
+	/// placeholder page per lightmap (see <c>GltfCustomDataExporter</c>), so a consumer that ignores
+	/// the sidecars renders unlit.
 	///
+	/// Version 2 (2026-09-02 .. 09-23) had the same shape without <c>rgbmRange</c>; its pages were
+	/// encoded at range 5.
 	/// Version 1 (pre-2026-09) instead pointed <c>image</c> at a tone-curve LDR sidecar
 	/// (<c>Bank_Lightmap-0.png</c>, in unresolved <c>{name}</c> token form) and listed the RGBM8
 	/// pages in a separate <c>rgbmPages</c> array. That LDR sidecar is no longer written.

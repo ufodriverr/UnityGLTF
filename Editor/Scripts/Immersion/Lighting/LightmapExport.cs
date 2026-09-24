@@ -44,7 +44,8 @@ namespace UnityGLTF.Plugins
 	/// Naming + root-extension helpers shared by the two plugins that describe the lightmap pages.
 	///
 	/// A scene exports exactly ONE file per lightmap page: the lossless RGBM8 sidecar
-	/// <c>&lt;name&gt;_Lightmap-&lt;i&gt;_RGBM8.png</c> (decode <c>hdr = rgb * a * 5</c>, linear),
+	/// <c>&lt;name&gt;_Lightmap-&lt;i&gt;_RGBM8.png</c> (decode <c>hdr = rgb * a * <see cref="RgbmRange"/></c>,
+	/// linear; the range is declared in the payload as <c>rgbmRange</c>),
 	/// written by the Immersion custom-data export plugin (<c>GltfCustomDataExporter</c>, Editor
 	/// assembly) while the file NAMES are declared by <see cref="LightmapExportContext"/> in the
 	/// <see cref="IMMERSION_lightmaps"/> / <see cref="IMMERSION_lightmap"/> extensions. Plugin
@@ -59,9 +60,19 @@ namespace UnityGLTF.Plugins
 		/// 1 = <c>lightmaps[].image</c> was the tone-curve LDR sidecar (token form) and the RGBM8
 		/// pages were listed separately in <c>rgbmPages</c>;
 		/// 2 = <c>lightmaps[].image</c> IS the RGBM8 page, as a resolved file name, and there is
-		/// no <c>rgbmPages</c> array any more.
+		/// no <c>rgbmPages</c> array any more (pages decoded at range 5, implied);
+		/// 3 = as 2, but the pages are encoded at <see cref="RgbmRange"/> (8) and every entry plus
+		/// the root carry it explicitly as <c>rgbmRange</c> (2026-09-24, contract v2).
 		/// </summary>
-		public const int Version = 2;
+		public const int Version = 3;
+
+		/// <summary>
+		/// RGBM range of the lightmap pages (<c>hdr = rgb * a * RgbmRange</c>). The page FILE name
+		/// is unchanged (<c>_RGBM8</c> = 8-bit RGBM encoding marker), so the range must travel with
+		/// the data: <c>rgbmRange</c> in the root payload, in every <c>lightmaps[]</c> entry and in
+		/// the offsets JSON <c>lightmaps[]</c> entries.
+		/// </summary>
+		public const float RgbmRange = 8f;
 
 		/// <summary>Suffix (including the extension) of every RGBM8 lightmap page sidecar.</summary>
 		public const string PageFileSuffix = "_RGBM8.png";
@@ -141,6 +152,7 @@ namespace UnityGLTF.Plugins
 				{
 					["lightmapIndex"] = page.Index,
 					["image"] = ResolveName(exporter, gltfRoot, page.FileName),
+					["rgbmRange"] = RgbmRange,
 				});
 			}
 
@@ -160,10 +172,11 @@ namespace UnityGLTF.Plugins
 			{
 				if (lightmaps.data == null) lightmaps.data = new JObject();
 				lightmaps.data["version"] = Version;
+				lightmaps.data["rgbmRange"] = RgbmRange;
 				return lightmaps.data;
 			}
 
-			var data = new JObject { ["version"] = Version };
+			var data = new JObject { ["version"] = Version, ["rgbmRange"] = RgbmRange };
 			gltfRoot.AddExtension(IMMERSION_lightmaps.EXTENSION_NAME, new IMMERSION_lightmaps(data));
 			exporter?.DeclareExtensionUsage(IMMERSION_lightmaps.EXTENSION_NAME, false);
 			return data;
@@ -250,9 +263,10 @@ namespace UnityGLTF.Plugins
 					// projects/uploads keep matching. The {name} token is resolved on write.
 					["index"] = index,
 					["colorName"] = GLTFSceneExporter.SidecarNameToken + "_" + baseName,
+					["rgbmRange"] = ImmersionLightmapPages.RgbmRange,
 				});
 
-				lightmapsArr.Add(new JObject { ["lightmapIndex"] = index, ["image"] = fileName });
+				lightmapsArr.Add(new JObject { ["lightmapIndex"] = index, ["image"] = fileName, ["rgbmRange"] = ImmersionLightmapPages.RgbmRange });
 			}
 
 			if (fileNames.Count == 0) return;

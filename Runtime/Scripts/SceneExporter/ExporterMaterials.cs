@@ -286,7 +286,10 @@ namespace UnityGLTF
 			// Generic fallback for custom shaders (ShaderGraph/Amplify/hand-written): find a
 			// texture property with a normal-map-like name (e.g. _Normal, NormalTexture, or a
 			// _BumpMap on a shader that doesn't use the _NORMALMAP keyword).
-			if (material.NormalTexture == null && TryFindShaderProperty(materialObj, _customNormalNames, UnityEngine.Rendering.ShaderPropertyType.Texture, out var customNormalProp))
+			// Not for the Revolution shaders (Immersion/Web/*): their normal map ships decoded in
+			// extras.customShader.textures, a second converted copy here was pure image weight.
+			if (material.NormalTexture == null && !materialObj.shader.name.StartsWith("Immersion/Web/", System.StringComparison.Ordinal)
+				&& TryFindShaderProperty(materialObj, _customNormalNames, UnityEngine.Rendering.ShaderPropertyType.Texture, out var customNormalProp))
 			{
 				var normalTex = materialObj.GetTexture(customNormalProp);
 				if (normalTex is Texture2D)
