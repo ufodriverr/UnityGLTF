@@ -32,6 +32,8 @@ namespace Immersion.Export
 	/// - <c>-controller</c>: semicolon-separated AnimatorController asset paths, aligned by index;
 	///   empty segment = keep the prefab's own controller. The controller determines which clips
 	///   are baked into the GLB (UnityGLTF exports the clips referenced by the Animator).
+	/// - <c>-maxTextureSize N</c> / <c>-maxLightmapSize N</c>: optional caps of the Revolution
+	///   plugin (longest side in px); default 0 = full resolution.
 	///
 	/// Exit code 0 = every avatar exported; 1 = at least one failed (details on stdout, each
 	/// avatar logs a line starting with "[AvatarBatchExporter]").
@@ -61,7 +63,12 @@ namespace Immersion.Export
 			// export plugins on the next run — GetDefaultSettings() sidesteps that entirely.
 			var settings = GLTFSettings.GetDefaultSettings();
 			settings.ExportAnimations = true;
-			ImmersionExportSettings.ApplyDefaults(settings, isObjectExport: true);
+			var maxTextureSize = Math.Max(0, CliArgs.GetInt("-maxTextureSize", 0));
+			var maxLightmapSize = Math.Max(0, CliArgs.GetInt("-maxLightmapSize", 0));
+			ImmersionExportSettings.ApplyDefaults(settings, isObjectExport: true, maxTextureSize, maxLightmapSize);
+			Debug.Log("[AvatarBatchExporter] contract v" + GltfCustomDataExporter.CONTRACT_VERSION
+				+ ", probe range " + GltfCustomDataExporter.PROBE_RANGE
+				+ ", maxTextureSize " + (maxTextureSize > 0 ? maxTextureSize.ToString() : "unlimited"));
 
 			var failures = 0;
 			for (var i = 0; i < avatars.Count; i++)
@@ -112,6 +119,9 @@ namespace Immersion.Export
 					AnimatorExtrasExport.PayloadJson = string.IsNullOrEmpty(jsonPath) ? null : File.ReadAllText(jsonPath);
 
 					var context = new ExportContext(settings);
+					// a destroyed settings object makes ExportContext fall back to the project asset
+					if (!ReferenceEquals(context.settings, settings))
+						throw new Exception("export settings were replaced by the project settings asset");
 					var exporter = new GLTFSceneExporter(new[] { instance.transform }, context);
 					exporter.SaveGLB(outDir, name);
 

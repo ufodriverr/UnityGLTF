@@ -28,6 +28,10 @@ namespace Immersion.Export
 	///
 	/// - <c>-scenes</c>: semicolon-separated scene asset paths (required).
 	/// - <c>-out</c>: output directory for the GLBs (required; created if missing).
+	/// - <c>-maxTextureSize N</c> / <c>-maxLightmapSize N</c>: optional caps of the Revolution
+	///   plugin (longest side in px); default 0 = full resolution.
+	/// - <c>-embedLightmaps true</c>: also embed the full RGBM lightmap pages in the GLB (art-demo
+	///   parity; the sidecars are written either way).
 	///
 	/// Exit code 0 = every scene exported; 1 = at least one failed (details on stdout, each
 	/// scene logs a line starting with "[SceneBatchExporter]").
@@ -48,12 +52,17 @@ namespace Immersion.Export
 
 			Directory.CreateDirectory(outDir);
 
-			// Fresh in-memory settings with every plugin registered at its EnabledByDefault state
-			// (all IMMERSION plugins are EnabledByDefault). The persisted project settings asset
-			// can lose its plugin sub-assets in batch mode, silently disabling every export
-			// plugin — GetDefaultSettings() sidesteps that (same as AvatarBatchExporter).
-			var settings = GLTFSettings.GetDefaultSettings();
-			ImmersionExportSettings.ApplyDefaults(settings, isObjectExport: false);
+			var maxTextureSize = Math.Max(0, CliArgs.GetInt("-maxTextureSize", 0));
+			var maxLightmapSize = Math.Max(0, CliArgs.GetInt("-maxLightmapSize", 0));
+			var embedLightmaps = string.Equals(CliArgs.Get("-embedLightmaps"), "true", StringComparison.OrdinalIgnoreCase);
+			var previousEmbed = GltfCustomData.EmbedFullLightmapPages;
+			GltfCustomData.EmbedFullLightmapPages = embedLightmaps;
+			Debug.Log("[SceneBatchExporter] contract v" + GltfCustomDataExporter.CONTRACT_VERSION
+				+ ", lightmap RGBM range " + GltfCustomDataExporter.LIGHTMAP_RGBM_RANGE
+				+ ", probe range " + GltfCustomDataExporter.PROBE_RANGE
+				+ ", maxTextureSize " + (maxTextureSize > 0 ? maxTextureSize.ToString() : "unlimited")
+				+ ", maxLightmapSize " + (maxLightmapSize > 0 ? maxLightmapSize.ToString() : "unlimited")
+				+ ", embedLightmaps " + embedLightmaps);
 
 			var failures = 0;
 			foreach (var scenePath in scenePaths)
@@ -68,7 +77,18 @@ namespace Immersion.Export
 					var transforms = Array.ConvertAll(roots, gameObject => gameObject.transform);
 					if (transforms.Length == 0) throw new Exception("scene has no root GameObjects");
 
+					// Fresh in-memory settings with every plugin registered at its EnabledByDefault
+					// state (all IMMERSION plugins are EnabledByDefault) — the persisted project
+					// settings asset can lose its plugin sub-assets in batch mode. Built AFTER
+					// OpenScene, per scene: a Single-mode scene load unloads unreferenced objects, which
+					// destroyed settings created up front, and ExportContext then silently fell back to
+					// the project's settings asset (its JPEG heuristic, cache and plugin values — none of
+					// ImmersionExportSettings applied; every scene export before 2026-09-24 ran that way).
+					var settings = GLTFSettings.GetDefaultSettings();
+					ImmersionExportSettings.ApplyDefaults(settings, isObjectExport: false, maxTextureSize, maxLightmapSize);
 					var context = new ExportContext(settings);
+					if (!ReferenceEquals(context.settings, settings))
+						throw new Exception("export settings were replaced by the project settings asset");
 					var exporter = new GLTFSceneExporter(transforms, context);
 					exporter.SaveGLB(outDir, scene.name);
 
@@ -76,14 +96,16 @@ namespace Immersion.Export
 					// page per lightmap (<scene>_Lightmap-<i>_RGBM8.png — these hold the lighting,
 					// the GLB only carries 4x4 black placeholders), the lightmap offsets JSON and
 					// the reflection strip.
+					var sidecarPrefixes = new[] { "_Lightmap-", "_lightmap_offsets.json", "_reflection.png" }
+						.Select(suffix => scene.name + suffix).ToArray();
 					var sidecars = Directory.GetFiles(outDir)
 						.Select(Path.GetFileName)
-						.Where(f => f.StartsWith(scene.name + "_", StringComparison.Ordinal))
+						.Where(f => sidecarPrefixes.Any(prefix => f.StartsWith(prefix, StringComparison.Ordinal)))
 						.OrderBy(f => f, StringComparer.Ordinal)
 						.ToArray();
 					var rgbmPages = ImmersionLightmapPages.Pages.Count;
 					Debug.Log("[SceneBatchExporter] OK " + name + " -> " + Path.Combine(outDir, scene.name + ".glb")
-						+ " (RGBM8 lightmap pages: " + rgbmPages + ")"
+						+ " (RGBM lightmap pages: " + rgbmPages + ", range " + GltfCustomDataExporter.LIGHTMAP_RGBM_RANGE + ")"
 						+ (sidecars.Length > 0 ? " (sidecars: " + string.Join(", ", sidecars) + ")" : ""));
 				}
 				catch (Exception e)
@@ -93,6 +115,7 @@ namespace Immersion.Export
 				}
 			}
 
+			GltfCustomData.EmbedFullLightmapPages = previousEmbed;
 			Debug.Log("[SceneBatchExporter] done: " + (scenePaths.Count - failures) + "/" + scenePaths.Count + " exported to " + outDir);
 			CliArgs.Exit(failures > 0 ? 1 : 0);
 		}

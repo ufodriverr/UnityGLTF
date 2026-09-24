@@ -19,6 +19,15 @@ namespace Immersion.Export
 			return null;
 		}
 
+		/// <summary>Integer value following <paramref name="flag"/>, or <paramref name="fallback"/> when absent/unparsable.</summary>
+		public static int GetInt(string flag, int fallback)
+		{
+			var value = Get(flag);
+			return int.TryParse(value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+				? parsed
+				: fallback;
+		}
+
 		/// <summary>Splits a semicolon-separated list; empty segments are kept (they align lists by index).</summary>
 		public static List<string> Split(string value)
 		{

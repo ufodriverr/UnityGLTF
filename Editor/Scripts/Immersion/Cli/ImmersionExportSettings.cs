@@ -18,12 +18,37 @@ namespace Immersion.Export
 		/// exports get no skybox-fallback reflection strip: the empty export scene's procedural
 		/// sky is not part of the object.
 		/// </param>
-		public static void ApplyDefaults(GLTFSettings settings, bool isObjectExport)
+		/// <param name="maxTextureSize">
+		/// Texture cap of the Revolution plugin (<see cref="GltfCustomData"/>): 0 = unlimited (the
+		/// default — web exports ship full resolution and are sized in the Editor's Texture Tools).
+		/// </param>
+		/// <param name="maxLightmapSize">Lightmap page cap (HDR resample before the RGBM encode), 0 = unlimited.</param>
+		public static void ApplyDefaults(GLTFSettings settings, bool isObjectExport, int maxTextureSize = 0, int maxLightmapSize = 0)
 		{
+			// The static overrides win over the plugin fields; a previous caller must not leak into
+			// this export.
+			GltfCustomData.MaxTextureSizeOverride = -1;
+			GltfCustomData.MaxLightmapSizeOverride = -1;
+
+			// Lossless PNG for every texture. The JPEG heuristic keys off "does the texture have
+			// alpha", which UnityGLTF answers from the IMPORTED format of the active build target
+			// (Standalone DXT1 → JPEG, another target's alpha format → PNG) — the same material map
+			// came out JPEG here and PNG in the art team's export. Web assets are re-encoded
+			// (WebP, sized) afterwards in the Editor's Texture Tools, so the export stays lossless.
+			settings.UseTextureFileTypeHeuristic = false;
+			// UnityGLTF's persistent image-bytes cache (Temp/UnityGLTF) keys on the texture, NOT on
+			// the encode decision above — a JPEG cached by an earlier export was served again after
+			// switching to PNG. Batch exports always encode fresh.
+			settings.UseCaching = false;
+
 			foreach (var plugin in settings.ExportPlugins)
 			{
 				switch (plugin)
 				{
+					case GltfCustomData customData:
+						customData.MaxTextureSize = maxTextureSize;
+						customData.MaxLightmapSize = maxLightmapSize;
+						break;
 					// URP transparent materials with "preserve specular" would otherwise export
 					// transmissionFactor = 1 - alpha and render as invisible glass on the web.
 					case MaterialExtensionsExport materialExtensions:
