@@ -72,7 +72,8 @@ Unity.exe -batchmode -projectPath <proj> -executeMethod Immersion.Export.TwistPr
 
 Scene and avatar exporters take optional `-maxTextureSize N` / `-maxLightmapSize N` (longest side
 in px) — default 0 = full resolution; web assets are sized after export in the Editor's Texture
-Tools. Lists align by index; an empty segment means "none / keep the prefab's own". Both exporters
+Tools; textures are always written as lossless PNG and UnityGLTF's image cache is bypassed.
+Lists align by index; an empty segment means "none / keep the prefab's own". Both exporters
 build their settings from `GLTFSettings.GetDefaultSettings()` (the persisted settings asset can
 lose its plugin sub-assets in batch mode) and then apply `ImmersionExportSettings.ApplyDefaults`
 — so a project's settings asset never decides what a web export contains. Exit code 0 = all

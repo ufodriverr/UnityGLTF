@@ -33,6 +33,13 @@ clean). Current layout and concern map: `IMMERSION.md`; lighting contract: `IMME
   identical RGBM64 PNGs + `<prefix>_avatar_probes.json`.
 - The consuming project must drop its `Assets/_Project/Revolution` copy (same global classes and
   `Hidden/*` shaders).
+- **Fix — scene CLI settings:** `SceneBatchExporter` built its fresh settings before `OpenScene`;
+  the Single-mode load unloaded that unreferenced ScriptableObject and `ExportContext` silently
+  fell back to the project's settings asset, so no `ImmersionExportSettings` value (transmission
+  off, strip opt-out) ever reached a scene export. Settings are now built per scene after the load;
+  both CLIs throw if the context does not hold their settings object.
+- CLI exports write lossless **PNG only** (the JPEG heuristic followed the active build target's
+  imported format) and bypass UnityGLTF's persistent image cache.
 
 ## 2026-09-23 — cleanup wave
 
