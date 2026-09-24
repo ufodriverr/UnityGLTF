@@ -3,6 +3,37 @@
 Fork-specific history (upstream's `CHANGELOG.md` is left untouched so upstream merges stay
 clean). Current layout and concern map: `IMMERSION.md`; lighting contract: `IMMERSION_lighting.md`.
 
+## 2026-09-24 — Revolution exporter contract v2 (art v2 ported as a superset)
+
+- **Contract v2** in `GltfCustomData` (material + lighting halves): every key of the art team's
+  Revolution exporter v2 (`Assets/_Project/Revolution` @ `3f86b8dd01`, 09-23) with the same
+  name/type/meaning — `customShader.textures` = glTF texture **indices**, `hsv {h,s,v}` + `isHsv`
+  always, `uvRotation`, `isPbr`, `alphaTest`, `alphaCutoff`, `skin`, hair `_SpecColor` linear,
+  normal maps decoded **without** the green flip, probe binding `reflection_probe` (uuid) on
+  renderers and probe nodes, probe `texture` = index, lightmap RGBM range and probe equirect
+  range **5 → 8** — plus `"version": 2` on every `customShader` / `customData`, and what Unity
+  still renders but art v2 drops: `reflectionContribution`, the `_DETAIL` maps, glass
+  `color`/`cullMode`/`_BaseTex`, simpleLit `cullMode` (`_CullMode` 0 → glTF `doubleSided`), the new
+  `Immersion/Web/OcclusionMask` shader (`shader: "occlusionMask"`), `textureNames {slot: name}`,
+  renderer `lm_scale_offset` (numeric) + `reflection_probe_node`, probe `range` +
+  `bounds_center`/`bounds_extents`. `lm_uv_scale_offset` is culture-invariant.
+- Probe uuid = `GlobalObjectId.targetObjectId` (as art) with a deterministic FNV-1a fallback for
+  unsaved scenes (avatar CLI) / collisions; cached per probe.
+- Decoded normal maps are cached per source texture: no duplicate images (the art v2 GLB had 13).
+  The generic normal fallback in `ExporterMaterials` skips `Immersion/Web/*` (no extra glTF
+  `normalTexture` next to the decoded copy).
+- Lightmaps: sidecar names unchanged (`<name>_Lightmap-<i>_RGBM8.png`); the GLB placeholder / full
+  page is named `<lm>_<i>_RGBM8lightmap` (art v2 name); `IMMERSION_lightmaps` payload **version
+  3** with `rgbmRange: 8` at the root and per page; the offsets JSON carries `rgbmRange` too.
+- Optional caps `MaxTextureSize` / `MaxLightmapSize` on the plugin (default 0 = unlimited; CLI
+  `-maxTextureSize` / `-maxLightmapSize`, applied by `ImmersionExportSettings.ApplyDefaults`);
+  lightmaps are resampled in HDR before the encode. `SceneBatchExporter -embedLightmaps true`.
+- New CLI `AvatarProbeExporter.ExportFromScene`: per-avatar baked probes resolved from a logic
+  scene (`probeAnchor` → probe → baked `.exr` + intensity) → `exr2equirect.py --rgbm --webready`-
+  identical RGBM64 PNGs + `<prefix>_avatar_probes.json`.
+- The consuming project must drop its `Assets/_Project/Revolution` copy (same global classes and
+  `Hidden/*` shaders).
+
 ## 2026-09-23 — cleanup wave
 
 - **Layout by concern.** All Immersion code moved under `Editor/Scripts/Immersion/{Avatar,

@@ -21,6 +21,7 @@ Editor/Scripts/Immersion/
                 ReflectionProbeExport IMMERSION_reflection_probes: <name>_reflection.png strip
                 LightingExportUtils   cube -> strip blit, skybox bake, temp-texture pool
   Cli/          SceneBatchExporter    CLI: whole scenes -> GLB + sidecars
+                AvatarProbeExporter   CLI: logic scene -> one RGBM equirect PNG per avatar probe + manifest
                 ImmersionExportSettings  the plugin defaults every web export needs
                 CliArgs               -executeMethod argument helpers
   Diagnostics/  TwistProbe            play-mode twist-bone ground truth (closed investigation)
@@ -43,7 +44,8 @@ file, then look for the plugin.
 | Animation clip baking | `SceneExporter/ExporterAnimation.cs` (`ExportAnimationFromNode → ExportAnimationClips → ConvertClipToGLTFAnimation → GenerateMissingCurves/BakePropertyAnimation`), `ExporterAnimationHumanoid.cs` | two tagged hunks (sub-state-machine + blend-tree clips), `AvatarBatchExporter.PoseToDefaultState` (undriven bones bake CONSTANT curves from the current pose), `AnimatorExtrasExport` (authored flattened animator, set via `-animator`) |
 | Standard materials + textures | `SceneExporter/ExporterMaterials.cs` (`ExportMaterial`, `ExportPBRMetallicRoughness`), `ExporterTextures.cs` | tagged hunks: generic name matchers for custom shaders, metallic 0 default, spec-gloss fallback |
 | CC / Reallusion avatar materials | (taken over before the generic path) | `Avatar/AvatarMaterialMaps.cs` — the table; `Shaders/Immersion/ChannelPack.shader` packs the mask channels into glTF ORM |
-| Revolution shaders (`Immersion/Web/*`) | — | `Materials/GltfCustomData.cs` → `extras.customShader` (+ `NormalMapBlit`) |
+| Revolution shaders (`Immersion/Web/*`) | — | `Materials/GltfCustomData.cs` → `extras.customShader` contract v2 (+ `NormalMapBlit`); key list in `IMMERSION_lighting.md` ▸ Contract v2 |
+| Per-avatar baked probes (scene-config channel) | — | `Cli/AvatarProbeExporter.cs` |
 | Lightmaps | — | `Lighting/GltfCustomData.Lighting.cs` (RGBM8 pages + `customData.lm_index`), `Lighting/LightmapExport.cs` (offsets JSON + names) — see `IMMERSION_lighting.md` |
 | Reflection probes | — | `Lighting/GltfCustomData.Lighting.cs` (per-probe equirect + `customData`), `Lighting/ReflectionProbeExport.cs` (scene strip) |
 | Loose files next to the GLB | `GLTFSceneExporter` — `AddSidecarFile`, `SidecarNameToken`, `SidecarBaseName` (tagged) | every lighting plugin |
@@ -58,12 +60,19 @@ Unity.exe -batchmode -quit -projectPath <proj> -executeMethod Immersion.Export.A
 
 Unity.exe -batchmode -quit -projectPath <proj> -executeMethod Immersion.Export.SceneBatchExporter.ExportScenes
   -scenes "Assets/Scenes/EnvA.unity;Assets/Scenes/EnvB.unity" -out "C:/exports"
+  [-embedLightmaps true]
+
+Unity.exe -batchmode -quit -projectPath <proj> -executeMethod Immersion.Export.AvatarProbeExporter.ExportFromScene
+  -scene "Assets/_Project/Scenes/Logic/Logic_X.unity" -out "C:/exports"
+  [-range 64] [-webready false] [-avatars "MetaCoach;Lisa"] [-prefix Name]
 
 Unity.exe -batchmode -projectPath <proj> -executeMethod Immersion.Export.TwistProbe.Run
   -avatars "a.prefab" -controller "a.controller" -out "C:/dir"        (no -quit)
 ```
 
-Lists align by index; an empty segment means "none / keep the prefab's own". Both exporters
+Scene and avatar exporters take optional `-maxTextureSize N` / `-maxLightmapSize N` (longest side
+in px) — default 0 = full resolution; web assets are sized after export in the Editor's Texture
+Tools. Lists align by index; an empty segment means "none / keep the prefab's own". Both exporters
 build their settings from `GLTFSettings.GetDefaultSettings()` (the persisted settings asset can
 lose its plugin sub-assets in batch mode) and then apply `ImmersionExportSettings.ApplyDefaults`
 — so a project's settings asset never decides what a web export contains. Exit code 0 = all
@@ -71,6 +80,11 @@ exported, 1 = at least one failed (per-item lines start with `[AvatarBatchExport
 `[SceneBatchExporter]`).
 
 ## Rules
+
+- The consuming project must NOT also contain the art team's Revolution copy
+  (`Assets/_Project/Revolution`): it declares the same global classes (`GltfCustomData`,
+  `GltfCustomDataExporter`, `NormalMapBlitExporter`) and `Hidden/*` encode shaders — two plugins
+  would register and `Shader.Find` becomes ambiguous. Its v2 contract is ported here as a superset.
 
 - Every file needs a committed `.meta` — a git-URL package silently drops files without one.
 - After a fork push, consuming projects pin the commit in `Packages/packages-lock.json`: bump via
