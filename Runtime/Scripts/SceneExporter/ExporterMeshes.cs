@@ -337,9 +337,19 @@ namespace UnityGLTF
 			// walk submeshes and export the ones with non-null meshes
 			for (int id = 0; id < maxOfSubMeshesAndMaterials; id++)
 			{
+				// IMMERSION: Unity draws submesh i only when the renderer has a material slot i — a
+				// renderer with fewer slots than submeshes leaves the rest undrawn (scene instances
+				// truncate m_Materials to hide phantom submeshes, e.g. the ERT avatars' Organica
+				// shell). Upstream wrapped the slot index and drew them with slot 0's material.
+				if (id >= materialsObj.Length && materialsObj.Length < meshObj.subMeshCount)
+				{
+					Debug.Log("[IMMERSION] " + meshObj.name + ": submesh " + id + " has no material slot (renderer has "
+						+ materialsObj.Length + " of " + meshObj.subMeshCount + ") - not drawn in Unity, not exported.");
+					continue;
+				}
 				var mat = materialsObj[id % materialsObj.Length];
 				var submesh = id % meshObj.subMeshCount;
-				
+
 				if (!mat) continue;
 				if (meshObj.GetIndexCount(submesh) <= 0) continue;
 
