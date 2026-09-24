@@ -1157,7 +1157,14 @@ namespace UnityGLTF
 
 			var lightPluginEnabled = _plugins.FirstOrDefault(x => x is LightsPunctualExportContext) != null;
 			Light unityLight = nodeTransform.GetComponent<Light>();
-			if (unityLight != null && unityLight.enabled && lightPluginEnabled)
+			// IMMERSION: a Baked-only light has no runtime effect in Unity (it exists for the
+			// lightmapper); exporting it lit every non-baked web material a second time
+			// (SalesForce_OfficeBuilding shipped 8 such lights, a π-intensity directional among them).
+			bool bakedOnlyLight = false;
+#if UNITY_EDITOR
+			bakedOnlyLight = unityLight != null && unityLight.lightmapBakeType == LightmapBakeType.Baked;
+#endif
+			if (unityLight != null && unityLight.enabled && lightPluginEnabled && !bakedOnlyLight)
 			{
 				node.Light = ExportLight(unityLight);
 			}

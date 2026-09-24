@@ -3,6 +3,15 @@
 Fork-specific history (upstream's `CHANGELOG.md` is left untouched so upstream merges stay
 clean). Current layout and concern map: `IMMERSION.md`; lighting contract: `IMMERSION_lighting.md`.
 
+## 2026-09-24 — integration check fixes (compile NOT verified in this change — batchmode compile before the next export)
+
+- `Bakery/Light` materials (Bakery area-light meshes) export as `KHR_materials_unlit` with
+  `_Color · intensity` (linear, clamped to 1): Unity shows them as bright unlit panels; before,
+  they came out as lit PBR and rendered as black squares on the web (Home: 88 ceiling panels).
+- Lights whose `lightmapBakeType` is `Baked` are no longer exported (`KHR_lights_punctual`): they
+  have no runtime effect in Unity (OfficeBuilding shipped 8, incl. a π directional).
+- Needs a re-export of `SalesForce_Debranded2` (panels) and `SalesForce_OfficeBuilding` (lights).
+
 ## 2026-09-24 — Revolution exporter contract v2 (art v2 ported as a superset)
 
 - **Contract v2** in `GltfCustomData` (material + lighting halves): every key of the art team's

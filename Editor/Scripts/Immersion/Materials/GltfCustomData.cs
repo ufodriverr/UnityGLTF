@@ -180,6 +180,9 @@ public partial class GltfCustomDataExporter : GLTFExportPluginContext
             case "Immersion/Web/OcclusionMask":
                 ExportOcclusionMask(exporter, material, materialNode, extras);
                 break;
+            case "Bakery/Light":
+                ExportBakeryLight(exporter, material, materialNode);
+                break;
         }
 
         materialNode.Extras = extras;
@@ -401,6 +404,24 @@ public partial class GltfCustomDataExporter : GLTFExportPluginContext
         // temporaries: kept alive until the exporter has encoded them, then destroyed
         _tempTexturesToDestroy.Add(decoded);
         return decoded;
+    }
+
+    // Bakery/Light (Assets/Bakery/ftLight.shader): `_Color * intensity * _MainTex`, no lighting.
+    // Bakery area-light meshes stay visible in Unity as bright unlit panels (URP runs the
+    // built-in pass as SRPDefaultUnlit); exported plainly they became a lit PBR material and
+    // rendered as black squares on the web (SalesForce_Debranded2: 88 ceiling panels). Exported
+    // as KHR_materials_unlit with the colour × intensity clamped to 1 — the panel saturates to
+    // white on an LDR target either way. No extras: the web keeps it a vanilla (unlit) material.
+    private static void ExportBakeryLight(GLTFSceneExporter exporter, Material material, GLTFMaterial materialNode)
+    {
+        Color lin = GetColor(material, "_Color", Color.white).linear * GetFloat(material, "intensity", 1f);
+        if (materialNode.PbrMetallicRoughness == null) materialNode.PbrMetallicRoughness = new PbrMetallicRoughness();
+        materialNode.PbrMetallicRoughness.BaseColorFactor = new GLTF.Math.Color(
+            Mathf.Clamp01(lin.r), Mathf.Clamp01(lin.g), Mathf.Clamp01(lin.b), 1f);
+        materialNode.PbrMetallicRoughness.MetallicFactor = 0;
+        if (materialNode.Extensions == null || !materialNode.Extensions.ContainsKey(KHR_MaterialsUnlitExtensionFactory.EXTENSION_NAME))
+            materialNode.AddExtension(KHR_MaterialsUnlitExtensionFactory.EXTENSION_NAME, new KHR_MaterialsUnlitExtension());
+        exporter.DeclareExtensionUsage(KHR_MaterialsUnlitExtensionFactory.EXTENSION_NAME, false);
     }
 
     // ───────────────────── Small helpers ───────────────────────────
