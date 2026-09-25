@@ -26,6 +26,7 @@ Editor/Scripts/Immersion/
                 ImmersionExportSettings  the plugin defaults every web export needs
                 CliArgs               -executeMethod argument helpers
   Diagnostics/  TwistProbe            play-mode twist-bone ground truth (closed investigation)
+                IkHandFrameProbe      play-mode IK hand frame: IK goal rotation -> hand bone world rotation
                 SceneStatistics       material/shader audit window (art helper)
 Editor/Shaders/Immersion/             RGBMEncode, CubemapToEquirect, NormalDecode, ChannelPack (URP, Shader.Find)
 Runtime/Resources/UnityGLTFCubemapToFaces.shader   6x1 strip blit (Resources.Load — must stay here)
@@ -71,6 +72,10 @@ Unity.exe -batchmode -quit -projectPath <proj> -executeMethod Immersion.Export.A
 
 Unity.exe -batchmode -projectPath <proj> -executeMethod Immersion.Export.TwistProbe.Run
   -avatars "a.prefab" -controller "a.controller" -out "C:/dir"        (no -quit)
+
+Unity.exe -batchmode -projectPath <proj> -executeMethod Immersion.Export.IkHandFrameProbe.Run
+  -scene "Assets/_Project/Scenes/Logic/Logic_X.unity" -out "C:/dir"
+  [-times "0.13;0.47;0.81"] [-settle 4]                                (no -quit)
 ```
 
 Scene and avatar exporters take optional `-maxTextureSize N` / `-maxLightmapSize N` (longest side

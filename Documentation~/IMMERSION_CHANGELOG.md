@@ -3,6 +3,18 @@
 Fork-specific history (upstream's `CHANGELOG.md` is left untouched so upstream merges stay
 clean). Current layout and concern map: `IMMERSION.md`; lighting contract: `IMMERSION_lighting.md`.
 
+## 2026-09-25 — IkHandFrameProbe (IK hand-frame calibration)
+
+- `Diagnostics/IkHandFrameProbe.cs`: batchmode play-mode probe. Opens a logic scene, records every
+  `CharacterIK` rig (source model, controller, avatar, root/bone/target transforms), rebuilds the rigs
+  in an empty scene and drives `OnAnimatorIK` with a line-for-line mirror of `CharacterIK`. Per clip
+  time it samples an IK-off frame and IK-on frames with the scene target rotation plus 5 perturbed
+  ones, and dumps target vs `CC_Base_*_Hand` world rotations, arm bones, the Animator's goal
+  readback and the Avatar's internal pre/post rotations to `-out/ik-hand-frame.json`. The play-mode
+  MonoBehaviours share the file with the static entry class on purpose (Unity refuses AddComponent
+  for an Editor-folder MonoBehaviour that owns a MonoScript). Result (531 Lisa/Bert): the goal-to-hand
+  offset is constant (spread < 1e-4 deg) and equals `R_side · inverse(Avatar.GetPostRotation(hand))`.
+
 ## 2026-09-24 — avatars export with their logic-scene renderer state
 
 - `AvatarBatchExporter -logicScene <scene> [-logicInstances "A;B"]` (`Avatar/LogicSceneRendererOverrides.cs`):
