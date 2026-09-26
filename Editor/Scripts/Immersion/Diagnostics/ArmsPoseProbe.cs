@@ -435,7 +435,10 @@ namespace Immersion.Export
 				var bytes = new byte[verts.Length * 12];
 				for (var i = 0; i < verts.Length; i++)
 				{
-					var w = x.position + x.rotation * verts[i]; // useScale: scale already baked in
+					// BakeMesh(useScale: true) on these SMRs returns CENTIMETRES: the SMR node's own 0.01 scale is
+					// NOT applied, so the scale is NOT "already baked in". Readers multiply the written values by
+					// 0.01 (measured: that matches the DEV GLB skinning to 0.001 mm; docs DISMISSER_ARMS_CROSSED.md §6).
+					var w = x.position + x.rotation * verts[i];
 					var r = inv * (w - P);
 					Buffer.BlockCopy(BitConverter.GetBytes(-r.x), 0, bytes, i * 12, 4);
 					Buffer.BlockCopy(BitConverter.GetBytes(r.y), 0, bytes, i * 12 + 4, 4);
