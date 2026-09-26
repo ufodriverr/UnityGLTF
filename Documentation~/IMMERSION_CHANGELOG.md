@@ -3,6 +3,19 @@
 Fork-specific history (upstream's `CHANGELOG.md` is left untouched so upstream merges stay
 clean). Current layout and concern map: `IMMERSION.md`; lighting contract: `IMMERSION_lighting.md`.
 
+## 2026-09-26 — LowerBodyTraceProbe (Lisa lower-body question) + IkHandFrameProbe.CaptureScene internal
+
+- `Diagnostics/LowerBodyTraceProbe.cs` (`-executeMethod Immersion.Export.LowerBodyTraceProbe.Run -scene <logic scene>
+  -out <dir> [-rigs "Lisa"] [-seconds 7]`): reuses IkHandFrameProbe's scene capture, then in play mode (fixed 60 fps)
+  rebuilds each CharacterIK rig five times side by side (scene controller + CharacterIK mirror; IK off; applyRootMotion
+  off; the state clip through a manual `AnimationClipPlayable` with foot IK on / off at the same clip time) and
+  records the Animator GameObject plus every body bone's world pose per frame (`lower-body-trace.json`).
+- Result (531 Lisa, `OnKnees`): Unity's legs are locally frozen (0.000 deg articulation), the lower body only rides
+  the hips (<= 4.8 mm / 0.6 deg, model units). UnityGLTF's humanoid bake (`CollectClipCurvesBySampling`,
+  `AnimationClipPlayable` default foot IK ON) reproduces the foot-IK variant to 0 mm, while the controller state has
+  `IKOnFeet 0`: the baked legs pin the feet and flex the knees (the web shows leg motion Unity does not have).
+- `IkHandFrameProbe.CaptureScene` is now `internal` (shared by LowerBodyTraceProbe).
+
 ## 2026-09-26 — AnimatorSettingsProbe (effective applyRootMotion of logic-scene characters)
 
 - `Diagnostics/AnimatorSettingsProbe.cs` (`-executeMethod Immersion.Export.AnimatorSettingsProbe.Run

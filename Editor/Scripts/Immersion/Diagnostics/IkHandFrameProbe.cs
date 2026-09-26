@@ -87,7 +87,7 @@ namespace Immersion.Export
 
 		// ---------------------------------------------------------------- edit-mode capture
 
-		private static Capture CaptureScene(string scenePath)
+		internal static Capture CaptureScene(string scenePath)
 		{
 			var scene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
 			var capture = new Capture { scene = scenePath };
