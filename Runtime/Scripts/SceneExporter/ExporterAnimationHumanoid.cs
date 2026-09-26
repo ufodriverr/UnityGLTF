@@ -23,12 +23,20 @@ namespace UnityGLTF
 	public partial class GLTFSceneExporter
 	{
 #if ANIMATION_SUPPORTED
-		internal void CollectClipCurvesBySampling(GameObject root, AnimationClip clip, Dictionary<string, TargetCurveSet> targetCurves)
+		internal void CollectClipCurvesBySampling(GameObject root, AnimationClip clip, Dictionary<string, TargetCurveSet> targetCurves, bool? humanoidFootIK)
 		{
+			// IMMERSION: fork change — Foot IK is the playing state's (AnimatorState.iKOnFeet), passed down
+			// from ExportAnimationClips; AnimationClipPlayable's own default (ON) is never used for a humanoid
+			// clip. No value = no known state and no caller decision: refuse instead of guessing.
+			if (clip.isHumanMotion && !humanoidFootIK.HasValue)
+				throw new System.InvalidOperationException($"[IMMERSION] humanoid clip '{clip.name}' has no playing Animator state and no HumanoidLooseClipFootIK: its Foot IK is unknown, not exported");
+
 			var recorder = new GLTFRecorder(root.transform, false, false, false);
 
 			var playableGraph = PlayableGraph.Create();
-			var animationClipPlayable = (Playable) AnimationClipPlayable.Create(playableGraph, clip);
+			var clipPlayable = AnimationClipPlayable.Create(playableGraph, clip);
+			if (clip.isHumanMotion) clipPlayable.SetApplyFootIK(humanoidFootIK.Value);
+			var animationClipPlayable = (Playable) clipPlayable;
 
 #if UNITY_2020_2_OR_NEWER
 			var rigs = root.GetComponents<IAnimationWindowPreview>();
@@ -51,8 +59,10 @@ namespace UnityGLTF
 			playableOutput.SetSourcePlayable(animationClipPlayable);
 			playableGraph.SetTimeUpdateMode(DirectorUpdateMode.Manual);
 
-			var timeStep = 1.0f / 30.0f;
+			// IMMERSION: sample on THE bake grid (GLTFSceneExporter.BakeGrid), so BakePropertyAnimation later
+			// reads back exactly these samples instead of interpolating between them.
 			var length = clip.length;
+			BakeGrid(length, BakeFramerate, out var gridSamples, out var timeStep);
 			var time = 0f;
 
 #if UNITY_2020_1_OR_NEWER
@@ -105,9 +115,10 @@ namespace UnityGLTF
 
 			recorder.StartRecording(time);
 
-			while (time + timeStep < length)
+			// IMMERSION: i * timeStep (not an accumulated sum): bit-identical to BakePropertyAnimation's times.
+			for (var i = 1; i < gridSamples; i++)
 			{
-				time += timeStep;
+				time = i * timeStep;
 				foreach (var rig in rigs) rig.UpdatePreviewGraph(playableGraph);
 				AnimationMode.SamplePlayableGraph(playableGraph, 0, time);
 				recorder.UpdateRecording(time);

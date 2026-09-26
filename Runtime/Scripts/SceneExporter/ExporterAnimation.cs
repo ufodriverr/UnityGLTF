@@ -35,7 +35,45 @@ namespace UnityGLTF
 		private readonly Dictionary<(AnimationClip clip, float speed, string targetPath), Transform> _clipAndSpeedAndPathToExportedTransform = new Dictionary<(AnimationClip, float, string), Transform>();
 		private readonly Dictionary<(AnimationClip clip, float speed, Transform transform), GLTFAnimation> _clipAndSpeedAndNodeToAnimation = new Dictionary<(AnimationClip, float, Transform), GLTFAnimation>();
 
+		// IMMERSION: fork change — humanoid clips are baked with the Foot IK setting of the Animator
+		// state that plays them (AnimatorState.iKOnFeet), never with AnimationClipPlayable's default
+		// (Foot IK ON). Unity applies a clip's foot IK goals only when its playing state has Foot IK
+		// on; a bake with it on pins the feet where the state has it off (anim-v2, Lisa OnKnees:
+		// knees 9-13 mm / thighs ~2 deg per cycle, a 2 cm leg slide on load).
+		private readonly Dictionary<(AnimationClip clip, float speed, Transform transform), bool?> _humanoidFootIKByClipAndNode = new Dictionary<(AnimationClip, float, Transform), bool?>();
+
+		/// <summary>
+		/// IMMERSION: Foot IK for humanoid clips that have no known Animator state: clips on a legacy
+		/// Animation component, clips no state or blend tree of the controller references, and direct
+		/// <see cref="ExportAnimationClip(AnimationClip,string,Transform,float)"/> calls. Null (the
+		/// default) makes such a clip fail to export: the caller has to decide, there is no default.
+		/// </summary>
+		public bool? HumanoidLooseClipFootIK { get; set; }
+
 		private static int AnimationBakingFramerate = 30; // FPS
+
+		/// <summary>
+		/// IMMERSION: bake rate of this export (keys per second); null = the UnityGLTF default (30).
+		/// ClipBatchExporter sets the clip's own frame rate, so every source frame becomes a key.
+		/// </summary>
+		public float? AnimationBakingFramerateOverride { get; set; }
+
+		private float BakeFramerate => AnimationBakingFramerateOverride ?? AnimationBakingFramerate;
+
+		/// <summary>
+		/// IMMERSION: THE sample grid of a clip bake, shared by the humanoid sampler and
+		/// BakePropertyAnimation: samples i * deltaTime for i in [0, nbSamples) plus the clip end.
+		/// Upstream sampled humanoid clips on a fixed 1/30 s grid, stored them as zero-tangent curves and
+		/// re-evaluated those on the length / ceil(length * 30) grid, so nearly every exported key was an
+		/// interpolation between two Unity samples (fast fingers: up to 25 mm off Unity at the key itself).
+		/// On one grid every key IS a Unity sample. A length within 0.001 frames of a whole number of
+		/// frames counts as that number (a 60 fps clip stored as 18.016668 s = 1081 frames, not 1082).
+		/// </summary>
+		internal static void BakeGrid(float length, float framerate, out int nbSamples, out float deltaTime)
+		{
+			nbSamples = Mathf.Max(1, Mathf.CeilToInt(length * framerate - 0.001f));
+			deltaTime = length / nbSamples;
+		}
 		private static bool BakeAnimationData = true;
 #endif
 
@@ -156,6 +194,48 @@ namespace UnityGLTF
 			}
 		}
 
+		// IMMERSION: fork helper. The state whose motion is a BlendTree (at any depth) holding the clip.
+		private static AnimatorState FindStateOwningBlendTreeClip(AnimationClip clip, AnimatorController animatorController)
+		{
+			if (!clip || !animatorController) return null;
+			foreach (var layer in animatorController.layers)
+			{
+				if (!layer.stateMachine) continue;
+				foreach (var state in GetStatesRecursive(layer.stateMachine))
+					if (state.motion is BlendTree tree && BlendTreeContains(tree, clip))
+						return state;
+			}
+			return null;
+		}
+
+		private static bool BlendTreeContains(BlendTree tree, AnimationClip clip)
+		{
+			foreach (var child in tree.children)
+			{
+				if (child.motion is AnimationClip c && c == clip) return true;
+				if (child.motion is BlendTree sub && BlendTreeContains(sub, clip)) return true;
+			}
+			return false;
+		}
+
+		private static string FootIKLabel(bool? footIK) => footIK.HasValue ? (footIK.Value ? "on" : "off") : "unset";
+
+		// IMMERSION: fork helper. State settings that change what Unity shows but that the bake does not
+		// reproduce (the sampler plays the bare clip). Logged so an avatar export cannot drop them silently;
+		// ClipBatchExporter refuses them outright.
+		private static void WarnUnbakedStateSettings(AnimatorState state, AnimationClip clip)
+		{
+			if (!clip || !clip.isHumanMotion) return;
+			var unbaked = new List<string>();
+			if (state.mirror) unbaked.Add("mirror");
+			if (state.mirrorParameterActive) unbaked.Add("mirrorParameter '" + state.mirrorParameter + "'");
+			if (Mathf.Abs(state.cycleOffset) > 0f) unbaked.Add("cycleOffset " + state.cycleOffset);
+			if (state.cycleOffsetParameterActive) unbaked.Add("cycleOffsetParameter '" + state.cycleOffsetParameter + "'");
+			if (state.timeParameterActive) unbaked.Add("timeParameter '" + state.timeParameter + "'");
+			if (unbaked.Count > 0)
+				UnityEngine.Debug.LogWarning($"[IMMERSION] state '{state.name}' plays '{clip.name}' with {string.Join(", ", unbaked)}: NOT baked (the GLB holds the bare clip)");
+		}
+
 		private GLTFAnimation GetOrCreateAnimation(AnimationClip clip, string searchForDuplicateName, float speed, Transform node)
 		{
 			var existingAnim = default(GLTFAnimation);
@@ -234,14 +314,21 @@ namespace UnityGLTF
 							speed = state.speed * (state.speedParameterActive ? animator.GetFloat(state.speedParameter) : 1f);
 						}
 						var name = clips[i].name;
-						ExportAnimationClip(clips[i], name, nodeTransform, speed);
+						WarnUnbakedStateSettings(state, clips[i]);
+						// IMMERSION: the playing state's Foot IK (see HumanoidLooseClipFootIK).
+						ExportAnimationClip(clips[i], name, nodeTransform, speed, state.iKOnFeet);
 					}
 
 					// IMMERSION: fork change — blend-tree members must be baked too.
 					// Clips that aren't used directly by a state (e.g. members of a BlendTree) are still
 					// referenced by the animator controller, so they need to be baked too. Export once at default speed.
+					// Foot IK comes from the state whose blend tree holds the clip; no such state = the caller's
+					// HumanoidLooseClipFootIK.
 					if (!exportedForAnyState)
-						ExportAnimationClip(clips[i], clips[i].name, nodeTransform, 1f);
+					{
+						var owner = FindStateOwningBlendTreeClip(clips[i], animatorController);
+						ExportAnimationClip(clips[i], clips[i].name, nodeTransform, 1f, owner ? owner.iKOnFeet : HumanoidLooseClipFootIK);
+					}
 				}
 			}
 			else
@@ -250,7 +337,7 @@ namespace UnityGLTF
 				{
 					if (!clips[i]) continue;
 					var speed = 1f;
-					ExportAnimationClip(clips[i], clips[i].name, nodeTransform, speed);
+					ExportAnimationClip(clips[i], clips[i].name, nodeTransform, speed, HumanoidLooseClipFootIK);
 				}
 			}
 
@@ -260,7 +347,21 @@ namespace UnityGLTF
 
 		public GLTFAnimation ExportAnimationClip(AnimationClip clip, string name, Transform node, float speed)
 		{
+			return ExportAnimationClip(clip, name, node, speed, HumanoidLooseClipFootIK);
+		}
+
+		/// <param name="humanoidFootIK">IMMERSION: Foot IK of the state that plays the clip (AnimatorState.iKOnFeet).
+		/// Required for humanoid clips (null = the export of that clip fails); ignored for generic clips.</param>
+		public GLTFAnimation ExportAnimationClip(AnimationClip clip, string name, Transform node, float speed, bool? humanoidFootIK)
+		{
 			if (!clip) return null;
+			// IMMERSION: one clip at one speed on one node can only be baked one way. Two states that play it
+			// with different Foot IK cannot share the animation GetOrCreateAnimation would hand back.
+			var footKey = (clip, speed, node);
+			if (_humanoidFootIKByClipAndNode.TryGetValue(footKey, out var bakedFootIK) && bakedFootIK != humanoidFootIK && clip.isHumanMotion)
+				throw new InvalidOperationException($"[IMMERSION] clip '{clip.name}' at speed {speed} is played by states with different Foot IK ({FootIKLabel(bakedFootIK)} and {FootIKLabel(humanoidFootIK)}); one GLB animation cannot be both");
+			_humanoidFootIKByClipAndNode[footKey] = humanoidFootIK;
+
 			GLTFAnimation anim = GetOrCreateAnimation(clip, name, speed, node);
 			// early out if this is exactly an animation that has already been exported. Not retargeted or changed otherwise.
 			if (_root.Animations.Contains(anim)) return anim;
@@ -269,7 +370,7 @@ namespace UnityGLTF
 			if(settings.UniqueAnimationNames)
 				anim.Name = ObjectNames.GetUniqueName(_root.Animations.Select(x => x.Name).ToArray(), anim.Name);
 
-			ConvertClipToGLTFAnimation(clip, node, anim, speed);
+			ConvertClipToGLTFAnimation(clip, node, anim, speed, humanoidFootIK);
 			
 			if (anim.Channels.Count > 0 && anim.Samplers.Count > 0 && !_root.Animations.Contains(anim))
 			{
@@ -754,7 +855,7 @@ namespace UnityGLTF
 			return clipRequiresSampling;
 		}
 
-		private void ConvertClipToGLTFAnimation(AnimationClip clip, Transform transform, GLTFAnimation animation, float speed)
+		private void ConvertClipToGLTFAnimation(AnimationClip clip, Transform transform, GLTFAnimation animation, float speed, bool? humanoidFootIK)
 		{
 			convertClipToGLTFAnimationMarker.Begin();
 
@@ -798,7 +899,7 @@ namespace UnityGLTF
 
 			// 1. browse clip, collect all curves and create a TargetCurveSet for each target
 			Dictionary<string, TargetCurveSet> targetCurvesBinding = new Dictionary<string, TargetCurveSet>();
-			CollectClipCurves(transform.gameObject, clip, targetCurvesBinding);
+			CollectClipCurves(transform.gameObject, clip, targetCurvesBinding, humanoidFootIK);
 
 			// Baking needs all properties, fill missing curves with transform data in 2 keyframes (start, endTime)
 			// where endTime is clip duration
@@ -951,7 +1052,7 @@ namespace UnityGLTF
 						foreach (KeyValuePair<string, PropertyCurve> c in curves)
 						{
 							var prop = c.Value;
-							if (BakePropertyAnimation(prop, clip.length, AnimationBakingFramerate, speedMultiplier, out times, out var values, out var interpolationType))
+							if (BakePropertyAnimation(prop, clip.length, BakeFramerate, speedMultiplier, out times, out var values, out var interpolationType))
 							{
 								AddAnimationData(prop.target, prop.propertyName, animation, times, values, interpolationType);
 								sampledAnimationData = true;
@@ -968,7 +1069,7 @@ namespace UnityGLTF
 						{
 							var trp2 = new PropertyCurve(targetTr, "translation") { propertyType = typeof(Vector3) };
 							trp2.curve.AddRange(curve.translationCurves);
-							if (BakePropertyAnimation(trp2, clip.length, AnimationBakingFramerate, speedMultiplier, out times, out var values2, out var interpolationType))
+							if (BakePropertyAnimation(trp2, clip.length, BakeFramerate, speedMultiplier, out times, out var values2, out var interpolationType))
 							{
 								AddAnimationData(targetTr, trp2.propertyName, animation, times, values2, interpolationType);
 								sampledAnimationData = true;
@@ -979,7 +1080,7 @@ namespace UnityGLTF
 						{
 							var trp3 = new PropertyCurve(targetTr, "rotation") { propertyType = typeof(Quaternion) };
 							trp3.curve.AddRange(curve.rotationCurves.Where(x => x != null));
-							if (BakePropertyAnimation(trp3, clip.length, AnimationBakingFramerate, speedMultiplier, out times, out var values3, out var interpolationType))
+							if (BakePropertyAnimation(trp3, clip.length, BakeFramerate, speedMultiplier, out times, out var values3, out var interpolationType))
 							{
 								AddAnimationData(targetTr, trp3.propertyName, animation, times, values3, interpolationType);
 								sampledAnimationData = true;
@@ -991,7 +1092,7 @@ namespace UnityGLTF
 						{
 							var trp4 = new PropertyCurve(targetTr, "scale") { propertyType = typeof(Vector3) };
 							trp4.curve.AddRange(curve.scaleCurves);
-							if (BakePropertyAnimation(trp4, clip.length, AnimationBakingFramerate, speedMultiplier, out times, out var values4, out var interpolationType))
+							if (BakePropertyAnimation(trp4, clip.length, BakeFramerate, speedMultiplier, out times, out var values4, out var interpolationType))
 							{
 								AddAnimationData(targetTr, trp4.propertyName, animation, times, values4, interpolationType);
 								sampledAnimationData = true;
@@ -1002,7 +1103,7 @@ namespace UnityGLTF
 						{
 							var trp5 = new PropertyCurve(targetTr, "weights") { propertyType = typeof(float) };
 							trp5.curve.AddRange(curve.weightCurves.Values);
-							if (BakePropertyAnimation(trp5, clip.length, AnimationBakingFramerate, speedMultiplier, out times, out var values5, out var interpolationType))
+							if (BakePropertyAnimation(trp5, clip.length, BakeFramerate, speedMultiplier, out times, out var values5, out var interpolationType))
 							{
 								var targetComponent = targetTr.GetComponent<SkinnedMeshRenderer>();
 								AddAnimationData(targetComponent, trp5.propertyName, animation, times, values5, interpolationType);
@@ -1025,7 +1126,7 @@ namespace UnityGLTF
 
 		private static readonly string[] _humanoidMotionPropertyNames = new string[] { "x", "y", "z", "w" };
 		private static string[] _humanoidMuscleNames = null;
-		private void CollectClipCurves(GameObject root, AnimationClip clip, Dictionary<string, TargetCurveSet> targetCurves)
+		private void CollectClipCurves(GameObject root, AnimationClip clip, Dictionary<string, TargetCurveSet> targetCurves, bool? humanoidFootIK)
 		{
 #if UNITY_EDITOR
 			// The clip sampling only gets transform data
@@ -1035,7 +1136,7 @@ namespace UnityGLTF
 			if (ClipRequiresSampling(clip, root.transform))
 			{
 				didSampleCurves = true;
-				CollectClipCurvesBySampling(root, clip, targetCurves);
+				CollectClipCurvesBySampling(root, clip, targetCurves, humanoidFootIK);
 			}
 
 			foreach (var binding in UnityEditor.AnimationUtility.GetCurveBindings(clip))
@@ -1445,8 +1546,7 @@ namespace UnityGLTF
 			prop.SortCurves();
 			if (!prop.Validate()) return false;
 
-			var nbSamples = Mathf.Max(1, Mathf.CeilToInt(length * bakingFramerate));
-			var deltaTime = length / nbSamples;
+			BakeGrid(length, bakingFramerate, out var nbSamples, out var deltaTime); // IMMERSION: the shared grid
 
 			var _times = new List<float>(nbSamples * 2);
 			var _values = new List<object>(nbSamples * 2);
@@ -1504,7 +1604,11 @@ namespace UnityGLTF
 				{
 					var t0 = time / speedMultiplier;
 					_times.Add(t0);
-					if (!AddValue(t0)) return false;
+					// IMMERSION: fork fix — the key at output time t0 = time / speed holds the curve's value at
+					// CLIP time `time`. Upstream evaluated it at t0, so a state speed below 1 baked 1x motion
+					// followed by a hold of the last value (Bert's Carriage_Sitting_M at 0.5: 15.9 s of motion,
+					// then one hold key at 31.77 s), and a speed above 1 baked only the first part of the clip.
+					if (!AddValue(time)) return false;
 				}
 
 				bool AddValue(float t)

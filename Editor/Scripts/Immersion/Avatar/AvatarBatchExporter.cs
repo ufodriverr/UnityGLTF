@@ -42,6 +42,13 @@ namespace Immersion.Export
 	///
 	/// Exit code 0 = every avatar exported; 1 = at least one failed (details on stdout, each
 	/// avatar logs a line starting with "[AvatarBatchExporter]").
+	///
+	/// Clip bake: every humanoid clip of the controller is baked with the Foot IK of the state that
+	/// plays it (AnimatorState.iKOnFeet; a blend-tree member: its state's), never UnityGLTF's playable
+	/// default (on) — the core change in ExporterAnimation.ExportAnimationClips. A controller that
+	/// plays one clip at one speed from states with different Foot IK fails the export. State speed
+	/// is baked (BakeAnimationSpeed) with the fork's BakePropertyAnimation fix; mirror, cycle offset
+	/// and time parameters are not baked (logged).
 	/// </summary>
 	public static class AvatarBatchExporter
 	{

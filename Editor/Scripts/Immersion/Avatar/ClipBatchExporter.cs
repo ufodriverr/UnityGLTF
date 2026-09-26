@@ -23,7 +23,8 @@ namespace Immersion.Export
 	///   -rig "Assets/A/Avatar.fbx" \
 	///   -clips "Assets/Clips/a.anim;Assets/Anims/Take.fbx::Idle01" \
 	///   -out "C:/exports/pool" \
-	///   [-names "a;Idle01"] [-poseController "Assets/A/Base.controller"] [-keepRenderers 1]
+	///   -states "Assets/A/Base.controller::Body/Body_0;Assets/A/Base.controller::Base Layer/Idle" \
+	///   [-footIk ";1"] [-sampleFps source|30] [-names "a;Idle01"] [-poseController "Assets/A/Base.controller"] [-keepRenderers 1]
 	/// </code>
 	///
 	/// - <c>-rig</c>: prefab or model (FBX) asset path of the reference rig (required). Must carry
@@ -33,6 +34,20 @@ namespace Immersion.Export
 	/// - <c>-out</c>: output directory (required; created if missing). Writes
 	///   <c>&lt;name&gt;.glb</c> + <c>&lt;name&gt;.clip.json</c> (Unity clip facts: length, frame rate,
 	///   loop, root-motion import flags) per clip.
+	/// - <c>-states</c>: the Animator state that PLAYS each clip in Unity, aligned with -clips:
+	///   <c>&lt;controller path&gt;::&lt;layer name&gt;/&lt;state name&gt;</c> (the state is searched in
+	///   the layer's sub-state machines too). The clip is baked through that state's settings:
+	///   Foot IK (<c>AnimatorState.iKOnFeet</c>) and write defaults are copied onto the export
+	///   state. Speed stays 1 (the web config carries the state speed; it is written to the
+	///   sidecar). Settings the bake cannot reproduce (mirror, a non-zero cycle offset, mirror /
+	///   cycle-offset / time parameters) FAIL the clip.
+	/// - <c>-footIk</c>: explicit Foot IK per clip (<c>0</c>/<c>1</c>, aligned with -clips) for a clip
+	///   no state plays. Every humanoid clip needs a -states entry or a -footIk value: there is no
+	///   default. A -footIk value next to a -states entry overrides the state (logged, and recorded
+	///   in the sidecar as <c>footIkFrom: flag-override</c>; used for the gate's negative control).
+	/// - <c>-sampleFps</c>: keys per second of the bake: <c>source</c> = each clip's own frame rate (every
+	///   source frame becomes a key, so the web interpolates between exactly the frames Unity has), a
+	///   number = that rate, absent = UnityGLTF's 30. Recorded in the sidecar (<c>bake.sampleFps</c>).
 	/// - <c>-names</c>: optional output names aligned with -clips; empty segment = the source file
 	///   name without extension (<c>.anim</c>) or the clip name (<c>::</c> form).
 	/// - <c>-poseController</c>: optional AnimatorController whose base-layer default state at t=0
@@ -62,13 +77,18 @@ namespace Immersion.Export
 			var rigPath = CliArgs.Get("-rig");
 			var clipSources = CliArgs.Split(CliArgs.Get("-clips")).Where(s => !string.IsNullOrEmpty(s)).ToList();
 			var names = CliArgs.Split(CliArgs.Get("-names"));
+			var states = CliArgs.Split(CliArgs.Get("-states"));
+			var footIks = CliArgs.Split(CliArgs.Get("-footIk"));
+			// Bake rate: "source" = each clip's own frame rate (every source frame becomes a key); a number =
+			// that rate; absent = UnityGLTF's 30.
+			var sampleFpsArg = CliArgs.Get("-sampleFps");
 			var outDir = CliArgs.Get("-out");
 			var poseControllerPath = CliArgs.Get("-poseController");
 			var keepRenderers = CliArgs.GetInt("-keepRenderers", 0) != 0;
 
 			if (string.IsNullOrEmpty(rigPath) || clipSources.Count == 0 || string.IsNullOrEmpty(outDir))
 			{
-				Debug.LogError(Tag + " usage: -rig <prefab|fbx> -clips \"a.anim;b.fbx::Take\" -out <dir> [-names \"a;b\"] [-poseController <controller>] [-keepRenderers 1]");
+				Debug.LogError(Tag + " usage: -rig <prefab|fbx> -clips \"a.anim;b.fbx::Take\" -out <dir> -states \"ctrl::Layer/State;…\" [-footIk \"0;1\"] [-names \"a;b\"] [-poseController <controller>] [-keepRenderers 1]");
 				CliArgs.Exit(1);
 				return;
 			}
@@ -131,7 +151,8 @@ namespace Immersion.Export
 
 					if (!keepRenderers) DisableRenderers(instance);
 
-					clipController = SingleClipController(name, clip);
+					var playing = ResolvePlayingState(i < states.Count ? states[i] : null, i < footIks.Count ? footIks[i] : null, clip);
+					clipController = SingleClipController(name, clip, playing);
 					var restFrom = PoseRest(instance, animator, poseController, clipController);
 					// Swapping the controller rebinds the Animator, which puts the skeleton back to
 					// its bind pose: snapshot the posed locals and write them back after the swap.
@@ -150,16 +171,19 @@ namespace Immersion.Export
 					if (!ReferenceEquals(context.settings, settings))
 						throw new Exception("export settings were replaced by the project settings asset");
 					var exporter = new GLTFSceneExporter(new[] { instance.transform }, context);
+					playing.sampleFps = ResolveSampleFps(sampleFpsArg, clip);
+					exporter.AnimationBakingFramerateOverride = playing.sampleFps;
 					// The sampler's Undo.PerformUndo must only revert its own recording group.
 					Undo.IncrementCurrentGroup();
 					exporter.SaveGLB(outDir, name);
 
 					var glbPath = Path.Combine(outDir, name + ".glb");
 					if (!File.Exists(glbPath)) throw new Exception("exporter wrote no file at '" + glbPath + "'");
-					File.WriteAllText(Path.Combine(outDir, name + ".clip.json"), ClipFactsJson(name, source, clip, rigPath, restFrom, animator.avatar), new UTF8Encoding(false));
+					File.WriteAllText(Path.Combine(outDir, name + ".clip.json"), ClipFactsJson(name, source, clip, rigPath, restFrom, animator.avatar, playing), new UTF8Encoding(false));
 
 					Debug.Log(Tag + " OK " + name + " -> " + glbPath + " (unity clip '" + clip.name + "', "
-						+ clip.length.ToString("0.###", CultureInfo.InvariantCulture) + " s, rest from " + restFrom + ")");
+						+ clip.length.ToString("0.###", CultureInfo.InvariantCulture) + " s, rest from " + restFrom
+						+ ", foot IK " + (playing.footIk ? "on" : "off") + " from " + playing.footIkFrom + ")");
 				}
 				catch (Exception e)
 				{
@@ -213,15 +237,126 @@ namespace Immersion.Export
 		/// revert them mid-export — the state machine is destroyed and the Animator reports the
 		/// controller as invalid.
 		/// </summary>
-		private static AnimatorController SingleClipController(string name, AnimationClip clip)
+		private static AnimatorController SingleClipController(string name, AnimationClip clip, PlayingState playing)
 		{
-			var state = new AnimatorState { name = name, motion = clip, speed = 1f, writeDefaultValues = true, hideFlags = HideFlags.HideInHierarchy };
+			// Foot IK + write defaults of the state that plays the clip in Unity; the core exporter bakes
+			// humanoid clips with the exporting state's iKOnFeet (ExporterAnimation.ExportAnimationClips).
+			var state = new AnimatorState { name = name, motion = clip, speed = 1f, writeDefaultValues = playing.writeDefaults, iKOnFeet = playing.footIk, hideFlags = HideFlags.HideInHierarchy };
 			var stateMachine = new AnimatorStateMachine { name = "Base Layer", hideFlags = HideFlags.HideInHierarchy };
 			stateMachine.states = new[] { new ChildAnimatorState { state = state, position = Vector3.zero } };
 			stateMachine.defaultState = state;
 			var controller = new AnimatorController { name = name };
 			controller.layers = new[] { new AnimatorControllerLayer { name = "Base Layer", stateMachine = stateMachine, defaultWeight = 1f } };
 			return controller;
+		}
+
+		/// <summary>The Unity state a clip is baked through (see -states / -footIk), as written to the sidecar.</summary>
+		private static float ResolveSampleFps(string arg, AnimationClip clip)
+		{
+			if (string.IsNullOrEmpty(arg)) return 30f;
+			if (arg == "source") return clip.frameRate > 0f ? clip.frameRate : 30f;
+			if (float.TryParse(arg, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) && v > 0f) return v;
+			throw new Exception("-sampleFps must be 'source' or a positive number, got '" + arg + "'");
+		}
+
+		internal sealed class PlayingState
+		{
+			public float sampleFps = 30f;
+			public string spec = "";
+			public string controller = "";
+			public string layer = "";
+			public int layerIndex = -1;
+			public string state = "";
+			public string stateMotion = "";
+			public bool? stateFootIk;
+			public bool footIk;
+			public string footIkFrom = "";
+			public bool writeDefaults = true;
+			public float speed = 1f;
+			public string speedParameter = "";
+			public bool mirror;
+			public float cycleOffset;
+			public bool layerIkPass;
+			public string layerBlending = "";
+			public string layerMask = "";
+		}
+
+		/// <summary>
+		/// Resolves the state that plays a clip (<c>ctrl::Layer/State</c>) and the Foot IK to bake with.
+		/// Throws for anything the bake cannot honour: no state and no explicit value for a humanoid clip,
+		/// an unknown state, or a state setting UnityGLTF's sampler does not reproduce.
+		/// </summary>
+		internal static PlayingState ResolvePlayingState(string stateSpec, string footIkArg, AnimationClip clip)
+		{
+			var p = new PlayingState { spec = stateSpec ?? "" };
+			bool? flag = null;
+			if (!string.IsNullOrEmpty(footIkArg))
+			{
+				if (footIkArg != "0" && footIkArg != "1") throw new Exception("-footIk value must be 0 or 1, got '" + footIkArg + "'");
+				flag = footIkArg == "1";
+			}
+			if (!string.IsNullOrEmpty(stateSpec))
+			{
+				var sep = stateSpec.IndexOf("::", StringComparison.Ordinal);
+				var slash = sep < 0 ? -1 : stateSpec.IndexOf('/', sep + 2);
+				if (sep < 0 || slash < 0) throw new Exception("-states entry must be '<controller>::<layer>/<state>', got '" + stateSpec + "'");
+				p.controller = stateSpec.Substring(0, sep);
+				p.layer = stateSpec.Substring(sep + 2, slash - sep - 2);
+				p.state = stateSpec.Substring(slash + 1);
+				var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(p.controller);
+				if (!controller) throw new Exception("playing-state controller not found at '" + p.controller + "'");
+				p.layerIndex = Array.FindIndex(controller.layers, l => l.name == p.layer);
+				if (p.layerIndex < 0) throw new Exception("layer '" + p.layer + "' not in " + p.controller);
+				var layer = controller.layers[p.layerIndex];
+				var state = AllStates(layer.stateMachine).FirstOrDefault(s => s.name == p.state);
+				if (!state) throw new Exception("state '" + p.state + "' not in layer '" + p.layer + "' of " + p.controller);
+				p.stateMotion = state.motion ? state.motion.name : "";
+				p.stateFootIk = state.iKOnFeet;
+				p.writeDefaults = state.writeDefaultValues;
+				p.speed = state.speed;
+				p.speedParameter = state.speedParameterActive ? state.speedParameter : "";
+				p.mirror = state.mirror;
+				p.cycleOffset = state.cycleOffset;
+				p.layerIkPass = layer.iKPass;
+				p.layerBlending = layer.blendingMode.ToString();
+				p.layerMask = layer.avatarMask ? AssetDatabase.GetAssetPath(layer.avatarMask) : "";
+				var unbaked = new List<string>();
+				if (state.mirror) unbaked.Add("mirror");
+				if (state.mirrorParameterActive) unbaked.Add("mirror parameter '" + state.mirrorParameter + "'");
+				if (Mathf.Abs(state.cycleOffset) > 0f) unbaked.Add("cycle offset " + state.cycleOffset.ToString("R", CultureInfo.InvariantCulture));
+				if (state.cycleOffsetParameterActive) unbaked.Add("cycle offset parameter '" + state.cycleOffsetParameter + "'");
+				if (state.timeParameterActive) unbaked.Add("time parameter '" + state.timeParameter + "'");
+				if (unbaked.Count > 0) throw new Exception("playing state " + stateSpec + " uses " + string.Join(", ", unbaked) + ", which the bake cannot reproduce");
+				p.footIk = state.iKOnFeet;
+				p.footIkFrom = "state";
+				if (flag.HasValue)
+				{
+					if (flag.Value != state.iKOnFeet)
+						Debug.LogWarning(Tag + " -footIk " + (flag.Value ? 1 : 0) + " OVERRIDES the playing state's Foot IK (" + (state.iKOnFeet ? 1 : 0) + ") for '" + clip.name + "': this bake does not match Unity");
+					p.footIk = flag.Value;
+					p.footIkFrom = flag.Value == state.iKOnFeet ? "state" : "flag-override";
+				}
+				return p;
+			}
+			if (flag.HasValue)
+			{
+				p.footIk = flag.Value;
+				p.footIkFrom = "flag";
+				return p;
+			}
+			if (clip.isHumanMotion)
+				throw new Exception("humanoid clip '" + clip.name + "' has no -states entry and no -footIk value: the Foot IK of the state that plays it is unknown");
+			p.footIkFrom = "n/a (generic clip)";
+			return p;
+		}
+
+		private static IEnumerable<AnimatorState> AllStates(AnimatorStateMachine machine)
+		{
+			if (!machine) yield break;
+			foreach (var child in machine.states) yield return child.state;
+			foreach (var sub in machine.stateMachines)
+				foreach (var s in AllStates(sub.stateMachine))
+					yield return s;
 		}
 
 		private static void DestroyController(AnimatorController controller)
@@ -250,7 +385,7 @@ namespace Immersion.Export
 			return from + ":" + (clip ? clip.name : "<none>") + "@0";
 		}
 
-		private static string ClipFactsJson(string name, string source, AnimationClip clip, string rigPath, string restFrom, Avatar avatar)
+		private static string ClipFactsJson(string name, string source, AnimationClip clip, string rigPath, string restFrom, Avatar avatar, PlayingState playing)
 		{
 			var s = AnimationUtility.GetAnimationClipSettings(clip);
 			var sourcePath = source.Split(new[] { "::" }, StringSplitOptions.None)[0];
@@ -287,6 +422,24 @@ namespace Immersion.Export
 			sb.Append("  \"level\": ").Append(F(s.level)).Append(",\n");
 			sb.Append("  \"averageSpeed\": [").Append(F(clip.averageSpeed.x)).Append(", ").Append(F(clip.averageSpeed.y)).Append(", ").Append(F(clip.averageSpeed.z)).Append("],\n");
 			sb.Append("  \"events\": ").Append(AnimationUtility.GetAnimationEvents(clip).Length.ToString(inv)).Append(",\n");
+			// The state the clip was baked through and the Foot IK it was baked with.
+			sb.Append("  \"bake\": { \"footIk\": ").Append(B(playing.footIk)).Append(", \"footIkFrom\": ").Append(Q(playing.footIkFrom))
+				.Append(", \"speed\": 1, \"sampleFps\": ").Append(F(playing.sampleFps)).Append(" },\n");
+			sb.Append("  \"playingState\": { \"spec\": ").Append(Q(playing.spec))
+				.Append(", \"controller\": ").Append(Q(playing.controller))
+				.Append(", \"layer\": ").Append(Q(playing.layer))
+				.Append(", \"layerIndex\": ").Append(playing.layerIndex.ToString(inv))
+				.Append(", \"state\": ").Append(Q(playing.state))
+				.Append(", \"stateMotion\": ").Append(Q(playing.stateMotion))
+				.Append(", \"iKOnFeet\": ").Append(playing.stateFootIk.HasValue ? B(playing.stateFootIk.Value) : "null")
+				.Append(", \"writeDefaults\": ").Append(B(playing.writeDefaults))
+				.Append(", \"speed\": ").Append(F(playing.speed))
+				.Append(", \"speedParameter\": ").Append(Q(playing.speedParameter))
+				.Append(", \"mirror\": ").Append(B(playing.mirror))
+				.Append(", \"cycleOffset\": ").Append(F(playing.cycleOffset))
+				.Append(", \"layerIkPass\": ").Append(B(playing.layerIkPass))
+				.Append(", \"layerBlending\": ").Append(Q(playing.layerBlending))
+				.Append(", \"layerMask\": ").Append(Q(playing.layerMask)).Append(" },\n");
 			// Humanoid bone map of the rig (human name -> transform name): lets tooling tell
 			// muscle-driven bones from unmapped helpers (CC rigs map Neck to CC_Base_NeckTwist01).
 			var human = avatar && avatar.isHuman ? avatar.humanDescription.human : new HumanBone[0];
