@@ -28,6 +28,7 @@ Editor/Scripts/Immersion/
                 CliArgs               -executeMethod argument helpers
   Diagnostics/  TwistProbe            play-mode twist-bone ground truth (closed investigation)
                 IkHandFrameProbe      play-mode IK hand frame: IK goal rotation -> hand bone world rotation
+                AnimatorSettingsProbe logic-scene Animators: applyRootMotion/modes/avatar/controller + measured root-motion yaw per clip
                 SceneStatistics       material/shader audit window (art helper)
 Editor/Shaders/Immersion/             RGBMEncode, CubemapToEquirect, NormalDecode, ChannelPack (URP, Shader.Find)
 Runtime/Resources/UnityGLTFCubemapToFaces.shader   6x1 strip blit (Resources.Load — must stay here)
@@ -82,6 +83,10 @@ Unity.exe -batchmode -projectPath <proj> -executeMethod Immersion.Export.TwistPr
 Unity.exe -batchmode -projectPath <proj> -executeMethod Immersion.Export.IkHandFrameProbe.Run
   -scene "Assets/_Project/Scenes/Logic/Logic_X.unity" -out "C:/dir"
   [-times "0.13;0.47;0.81"] [-settle 4]                                (no -quit)
+
+Unity.exe -batchmode -projectPath <proj> -executeMethod Immersion.Export.AnimatorSettingsProbe.Run
+  -scenes "Assets/_Project/Scenes/Logic/Logic_X.unity;Assets/.../Logic_Y.unity" -out "C:/dir"
+  [-seconds 3] [-playClips "Dismisser=Assets/.../a.anim;Camilla=Assets/.../b.fbx::Take"]   (no -quit)
 ```
 
 Scene and avatar exporters take optional `-maxTextureSize N` / `-maxLightmapSize N` (longest side

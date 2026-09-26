@@ -3,6 +3,20 @@
 Fork-specific history (upstream's `CHANGELOG.md` is left untouched so upstream merges stay
 clean). Current layout and concern map: `IMMERSION.md`; lighting contract: `IMMERSION_lighting.md`.
 
+## 2026-09-26 — AnimatorSettingsProbe (effective applyRootMotion of logic-scene characters)
+
+- `Diagnostics/AnimatorSettingsProbe.cs` (`-executeMethod Immersion.Export.AnimatorSettingsProbe.Run
+  -scenes "a.unity;b.unity" -out <dir> [-seconds 3] [-playClips "Name=clip.anim;..."]`): edit mode reads every
+  Animator of each logic scene through the API (`applyRootMotion`, `updateMode`, `cullingMode`, `isHuman`,
+  `hasRootMotion`, avatar, controller, source model + its own Animator values, prefab-instance overrides on the
+  Animator, `OnAnimatorMove` implementers, `KeepPositionRotation` values). Play mode (fixed 60 fps) rebuilds each
+  rig from its nearest prefab asset at the scene pose without touching `applyRootMotion`, reads the values again,
+  and with `-playClips` plays each clip once through Playables (with and without the rig's `KeepPositionRotation`)
+  and records the GameObject's visible yaw and XZ travel. Writes `animator-settings.json`.
+- Result (531 ERT + 316 Disney, all 8 Animators): `applyRootMotion` true everywhere (FBX default, no override), no
+  script takes root motion over; the GameObject turns by the clip's full root yaw (Dismisser `inplace_impatientlywaiting`
+  36.7 deg), clamped by `KeepPositionRotation` on Camilla.
+
 ## 2026-09-26 — ClipBatchExporter (one GLB per clip, web clip pool)
 
 - `Avatar/ClipBatchExporter.cs` (`-executeMethod Immersion.Export.ClipBatchExporter.ExportClips
