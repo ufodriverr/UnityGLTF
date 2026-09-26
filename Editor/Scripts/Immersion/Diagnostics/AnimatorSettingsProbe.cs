@@ -98,7 +98,7 @@ namespace Immersion.Export
 
 		// ---------------------------------------------------------------- edit-mode capture
 
-		private static void CaptureScene(string scenePath, Capture capture)
+		internal static void CaptureScene(string scenePath, Capture capture)
 		{
 			var scene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
 			var animators = scene.GetRootGameObjects().SelectMany(r => r.GetComponentsInChildren<Animator>(true)).ToList();
@@ -341,7 +341,7 @@ namespace Immersion.Export
 			Debug.Log($"[AnimatorSettingsProbe] play: built {rigs.Count} rigs ({capture.recs.Count} scene Animators, {capture.clipRuns.Count} clip runs)");
 		}
 
-		private static AnimationClip LoadClip(string spec)
+		internal static AnimationClip LoadClip(string spec)
 		{
 			var sep = spec.IndexOf("::", StringComparison.Ordinal);
 			var path = sep >= 0 ? spec.Substring(0, sep) : spec;
@@ -350,7 +350,7 @@ namespace Immersion.Export
 				.FirstOrDefault(a => !a.name.StartsWith("__preview__", StringComparison.Ordinal) && (take == null || a.name == take));
 		}
 
-		private static Animator Build(AnimatorSettingsProbe.Rec rec, bool withKpr, out string error)
+		internal static Animator Build(AnimatorSettingsProbe.Rec rec, bool withKpr, out string error)
 		{
 			error = null;
 			// The nearest prefab asset (keeps any prefab / variant-level override); scene-level overrides are in rec.animatorOverrides.
