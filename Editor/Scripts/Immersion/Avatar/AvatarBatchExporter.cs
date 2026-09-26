@@ -181,7 +181,7 @@ namespace Immersion.Export
 		// GenerateMissingCurves) then match the in-scene look instead of the raw T-pose prefab.
 		// Humanoid clips carry muscle curves, so plain SampleAnimationClip is a no-op — the
 		// Animator itself is driven (Play + Update) and the pose frozen for the export.
-		private static void PoseToDefaultState(GameObject instance)
+		internal static void PoseToDefaultState(GameObject instance)
 		{
 			var animator = instance.GetComponentInChildren<Animator>(true);
 			var controller = animator ? animator.runtimeAnimatorController as AnimatorController : null;

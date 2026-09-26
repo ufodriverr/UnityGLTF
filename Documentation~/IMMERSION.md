@@ -12,6 +12,7 @@ upstream files (`// IMMERSION:`).
 ```
 Editor/Scripts/Immersion/
   Avatar/       AvatarBatchExporter   CLI: avatar prefab -> GLB (poses the rig, bakes clips)
+                ClipBatchExporter     CLI: one GLB per clip on a reference rig (web clip-pool objects)
                 AvatarMaterialMaps    per-shader export table for the CC/Reallusion avatar shaders
                 AnimatorExtrasExport  scenes[].extras.IMMERSION_animator (flattened web animator)
                 LogicSceneRendererOverrides  -logicScene: export with the logic-scene instance's renderer state
@@ -45,6 +46,7 @@ file, then look for the plugin.
 | Mesh, rig, skin, blendshapes | `GLTFSceneExporter.SaveGLB → ExportScene → ExportNode`, `SceneExporter/ExporterMeshes.cs`, `ExporterSkinning.cs` | one tagged hunk in `ExporterMeshes.ExportPrimitive`: a submesh without a material slot is not exported (Unity does not draw it; upstream wrapped the slot index). Node TRS is captured from the **current pose**, which is why `AvatarBatchExporter` poses first |
 | Avatar materials as the module renders them | — | `Avatar/LogicSceneRendererOverrides.cs` (`-logicScene` / `-logicInstances`): materials, slot count, mesh and enabled state of the avatar's logic-scene instance replace the prefab defaults |
 | Animation clip baking | `SceneExporter/ExporterAnimation.cs` (`ExportAnimationFromNode → ExportAnimationClips → ConvertClipToGLTFAnimation → GenerateMissingCurves/BakePropertyAnimation`), `ExporterAnimationHumanoid.cs` | two tagged hunks (sub-state-machine + blend-tree clips), `AvatarBatchExporter.PoseToDefaultState` (undriven bones bake CONSTANT curves from the current pose), `AnimatorExtrasExport` (authored flattened animator, set via `-animator`) |
+| One clip per GLB (clip pool) | same as above | `Avatar/ClipBatchExporter.cs`: in-memory single-state controller per clip, renderers disabled (hierarchy kept), rest pose from `-poseController`; the library post-process (HelperTools `anim-library/export-pool-clips.mjs`) strips it to rig + one clip |
 | Standard materials + textures | `SceneExporter/ExporterMaterials.cs` (`ExportMaterial`, `ExportPBRMetallicRoughness`), `ExporterTextures.cs` | tagged hunks: generic name matchers for custom shaders, metallic 0 default, spec-gloss fallback |
 | CC / Reallusion avatar materials | (taken over before the generic path) | `Avatar/AvatarMaterialMaps.cs` — the table; `Shaders/Immersion/ChannelPack.shader` packs the mask channels into glTF ORM |
 | Revolution shaders (`Immersion/Web/*`) | — | `Materials/GltfCustomData.cs` → `extras.customShader` contract v2 (+ `NormalMapBlit`); key list in `IMMERSION_lighting.md` ▸ Contract v2 |
@@ -61,6 +63,10 @@ Unity.exe -batchmode -quit -projectPath <proj> -executeMethod Immersion.Export.A
   -avatars "Assets/A/Foo.prefab;Assets/B/Bar.prefab" -out "C:/exports"
   [-animator "C:/exports/foo.animator.json;;"] [-controller "Assets/A/Alt.controller;;"]
   [-logicScene "Assets/_Project/Scenes/Logic/Logic_X.unity" [-logicInstances "MetaCoach;;Lisa"]]
+
+Unity.exe -batchmode -quit -projectPath <proj> -executeMethod Immersion.Export.ClipBatchExporter.ExportClips
+  -rig "Assets/A/Avatar.fbx" -clips "Assets/Clips/a.anim;Assets/Anims/Take.fbx::Idle01" -out "C:/exports"
+  [-names "a;Idle01"] [-poseController "Assets/A/Base.controller"] [-keepRenderers 1]
 
 Unity.exe -batchmode -quit -projectPath <proj> -executeMethod Immersion.Export.SceneBatchExporter.ExportScenes
   -scenes "Assets/Scenes/EnvA.unity;Assets/Scenes/EnvB.unity" -out "C:/exports"
@@ -86,7 +92,7 @@ build their settings from `GLTFSettings.GetDefaultSettings()` (the persisted set
 lose its plugin sub-assets in batch mode) and then apply `ImmersionExportSettings.ApplyDefaults`
 — so a project's settings asset never decides what a web export contains. Exit code 0 = all
 exported, 1 = at least one failed (per-item lines start with `[AvatarBatchExporter]` /
-`[SceneBatchExporter]`).
+`[ClipBatchExporter]` / `[SceneBatchExporter]`).
 
 ## Rules
 

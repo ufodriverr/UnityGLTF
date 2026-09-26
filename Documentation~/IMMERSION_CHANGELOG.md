@@ -3,6 +3,23 @@
 Fork-specific history (upstream's `CHANGELOG.md` is left untouched so upstream merges stay
 clean). Current layout and concern map: `IMMERSION.md`; lighting contract: `IMMERSION_lighting.md`.
 
+## 2026-09-26 — ClipBatchExporter (one GLB per clip, web clip pool)
+
+- `Avatar/ClipBatchExporter.cs` (`-executeMethod Immersion.Export.ClipBatchExporter.ExportClips
+  -rig <prefab|fbx> -clips "a.anim;b.fbx::Take" -out <dir> [-names] [-poseController] [-keepRenderers 1]`):
+  bakes each clip on the reference rig through an in-memory single-state AnimatorController (never
+  saved; built from plain objects, because AddLayer/AddState register undo creations that the
+  humanoid sampler's `Undo.PerformUndo` reverts mid-export). Renderers are disabled, not destroyed:
+  the node hierarchy stays the avatar export's and blendshape curves still resolve their renderer.
+  The rest pose (node TRS = the web rig profile) comes from `-poseController`'s default state at t=0
+  via `AvatarBatchExporter.PoseToDefaultState` (now `internal`, unchanged); the posed locals are
+  re-applied after the controller swap (the rebind resets the skeleton to bind). Writes
+  `<name>.glb` + `<name>.clip.json` (length, frame rate, loop, bake-into-pose / keep-original
+  flags, humanoid bone map). `AvatarBatchExporter`'s behaviour is unchanged.
+- Verified on 26 clips (531 Dismisser, 316 Camilla): after the HelperTools library strip, clips
+  shared with the live avatar exports match them to < 1e-6 deg on every bone at 25 times, rest
+  pose identical, twist helpers 0.000 deg from bind.
+
 ## 2026-09-25 — IkHandFrameProbe (IK hand-frame calibration)
 
 - `Diagnostics/IkHandFrameProbe.cs`: batchmode play-mode probe. Opens a logic scene, records every
