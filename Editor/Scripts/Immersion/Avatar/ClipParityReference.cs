@@ -80,6 +80,19 @@ namespace Immersion.Export
 			public string state;
 			/// <summary>False = run with the CharacterIK goals zeroed (diagnostics only; the gate runs with IK).</summary>
 			public bool ik = true;
+			/// <summary>
+			/// Animator parameters that hold the case's state the way the module holds it while the clip plays
+			/// ("talk=1;level=4"; Bool 0/1/true/false, Int, Float; a Trigger is set when truthy). Without them a state
+			/// whose transitions leave on a parameter condition (talk IfNot, level NotEqual) ends at its first frame.
+			/// </summary>
+			public string parameters;
+			/// <summary>
+			/// An ADDITIVE layer is evaluated as an OVERRIDE layer (an in-memory clone of the controller; the asset
+			/// is not touched): the trace is then the clip itself on the layer's masked bones, so the gate checks the
+			/// bake. The additive composition (clip relative to its frame 0 over the layers below) is the runtime's
+			/// job and is not compared. Ignored on override layers.
+			/// </summary>
+			public bool additiveAsOverride;
 		}
 
 		[Serializable]
@@ -212,7 +225,12 @@ namespace Immersion.Export
 		{
 			switch (b)
 			{
-				case HumanBodyBones.Hips: case HumanBodyBones.Spine: case HumanBodyBones.Chest: case HumanBodyBones.UpperChest:
+				// The hips carry the humanoid body transform (position + orientation), which the mask's ROOT part
+				// gates, not BODY: a layer with Body on and Root off (204 UpperBodyMask) takes its spine/chest
+				// muscles from the clip but leaves the hips to the layers below.
+				case HumanBodyBones.Hips:
+					return AvatarMaskBodyPart.Root;
+				case HumanBodyBones.Spine: case HumanBodyBones.Chest: case HumanBodyBones.UpperChest:
 					return AvatarMaskBodyPart.Body;
 				case HumanBodyBones.Neck: case HumanBodyBones.Head: case HumanBodyBones.LeftEye: case HumanBodyBones.RightEye: case HumanBodyBones.Jaw:
 					return AvatarMaskBodyPart.Head;
@@ -261,6 +279,34 @@ namespace Immersion.Export
 			public BinaryWriter bin;
 			public int frames;
 			public readonly StringBuilder meta = new StringBuilder();
+			public string evaluatedAs;
+			public string parametersApplied = "";
+		}
+
+		/// <summary>Sets "name=value;…" on the Animator by the controller's parameter types; returns what was set.</summary>
+		private static string ApplyParameters(Animator animator, AnimatorController controller, string spec)
+		{
+			if (string.IsNullOrWhiteSpace(spec)) return "";
+			var applied = new List<string>();
+			foreach (var part in spec.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+			{
+				var eq = part.IndexOf('=');
+				if (eq <= 0) throw new Exception("parameter '" + part + "' is not name=value");
+				var name = part.Substring(0, eq).Trim();
+				var value = part.Substring(eq + 1).Trim();
+				var p = controller.parameters.FirstOrDefault(x => x.name == name);
+				if (p == null) throw new Exception("parameter '" + name + "' not in " + controller.name);
+				var truthy = value == "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase);
+				switch (p.type)
+				{
+					case AnimatorControllerParameterType.Bool: animator.SetBool(name, truthy); break;
+					case AnimatorControllerParameterType.Int: animator.SetInteger(name, int.Parse(value, Inv)); break;
+					case AnimatorControllerParameterType.Float: animator.SetFloat(name, float.Parse(value, Inv)); break;
+					case AnimatorControllerParameterType.Trigger: if (truthy) animator.SetTrigger(name); break;
+				}
+				applied.Add(name + "=" + value);
+			}
+			return string.Join(";", applied);
 		}
 
 		private ClipParityReference.Pending pending;
@@ -328,16 +374,32 @@ namespace Immersion.Export
 			if (!live.clip) throw new Exception("clip not found: " + c.clip);
 			var stateClip = live.state.motion as AnimationClip;
 			if (!stateClip) throw new Exception("state '" + c.state + "' holds no clip (blend trees are not supported)");
-			RuntimeAnimatorController run = controller;
+			// An additive layer evaluated as override (Case.additiveAsOverride): a non-persistent clone of the
+			// controller with that one layer switched; its state machines are the asset's own (shared, unchanged).
+			var runController = controller;
+			var evaluatedAs = layerDef.blendingMode.ToString();
+			if (c.additiveAsOverride && layerDef.blendingMode == AnimatorLayerBlendingMode.Additive)
+			{
+				runController = UnityEngine.Object.Instantiate(controller);
+				runController.hideFlags = HideFlags.DontSave;
+				runController.name = controller.name + " (gate override " + c.id + ")";
+				var layers = runController.layers;
+				layers[live.layer].blendingMode = AnimatorLayerBlendingMode.Override;
+				runController.layers = layers;
+				evaluatedAs = AnimatorLayerBlendingMode.Override.ToString();
+			}
+			live.evaluatedAs = evaluatedAs;
+			RuntimeAnimatorController run = runController;
 			var overridden = stateClip != live.clip;
 			if (overridden)
 			{
-				var aoc = new AnimatorOverrideController(controller) { name = controller.name + " (gate " + c.id + ")" };
+				var aoc = new AnimatorOverrideController(runController) { name = controller.name + " (gate " + c.id + ")" };
 				aoc[stateClip] = live.clip;
 				run = aoc;
 			}
 			animator.runtimeAnimatorController = run;
 			animator.Rebind(); // defaults = the scene locals applied above
+			live.parametersApplied = ApplyParameters(animator, runController, c.parameters);
 			for (var l = 1; l < controller.layers.Length; l++) animator.SetLayerWeight(l, l == live.layer ? 1f : 0f);
 			animator.Play(live.state.nameHash, live.layer, 0f);
 
@@ -421,7 +483,8 @@ namespace Immersion.Export
 				.Append(", \"mirror\": ").Append(B(s.mirror)).Append(", \"mirrorParameter\": \"").Append(s.mirrorParameterActive ? Esc(s.mirrorParameter) : "")
 				.Append("\", \"cycleOffset\": ").Append(F(s.cycleOffset)).Append(", \"cycleOffsetParameter\": \"").Append(s.cycleOffsetParameterActive ? Esc(s.cycleOffsetParameter) : "")
 				.Append("\", \"timeParameter\": \"").Append(s.timeParameterActive ? Esc(s.timeParameter) : "")
-				.Append("\", \"layerIkPass\": ").Append(B(layerDef.iKPass)).Append(", \"layerBlending\": \"").Append(layerDef.blendingMode).Append("\", \"layerMask\": \"").Append(mask ? Esc(AssetDatabase.GetAssetPath(mask)) : "").Append("\" },\n");
+				.Append("\", \"layerIkPass\": ").Append(B(layerDef.iKPass)).Append(", \"layerBlending\": \"").Append(layerDef.blendingMode).Append("\", \"evaluatedAs\": \"").Append(live.evaluatedAs)
+				.Append("\", \"parameters\": \"").Append(Esc(live.parametersApplied)).Append("\", \"layerMask\": \"").Append(mask ? Esc(AssetDatabase.GetAssetPath(mask)) : "").Append("\" },\n");
 			m.Append("  \"driven\": ").Append(mask ? "[" + string.Join(",", driven.Select(n => "\"" + Esc(n) + "\"")) + "]" : "\"all\"").Append(",\n");
 			m.Append("  \"ikExcludedRoots\": [").Append(string.Join(",", ikExcluded.Select(n => "\"" + Esc(n) + "\""))).Append("],\n");
 			// mesh-carrying nodes (Renderer GameObjects): not skeleton, never animated; the gate skips them
@@ -434,7 +497,7 @@ namespace Immersion.Export
 
 			Directory.CreateDirectory(pending.outDir);
 			live.bin = new BinaryWriter(File.Open(Path.Combine(pending.outDir, c.id + ".bin"), FileMode.Create));
-			Debug.Log($"{Tag} built {c.id}: {host.name} state {c.layer}/{c.state} (motion '{stateClip.name}' → '{live.clip.name}', overridden {overridden}) footIK {s.iKOnFeet} speed {speed} mask {(mask ? mask.name : "none")} driven {(mask ? driven.Count.ToString() : "all")} ik {(driver != null && driver.ikActive)} excluded [{string.Join(",", ikExcluded)}] applyRootMotion {animator.applyRootMotion}");
+			Debug.Log($"{Tag} built {c.id}: {host.name} state {c.layer}/{c.state} (motion '{stateClip.name}' → '{live.clip.name}', overridden {overridden}) footIK {s.iKOnFeet} speed {speed} blending {layerDef.blendingMode}→{live.evaluatedAs} params [{live.parametersApplied}] mask {(mask ? mask.name : "none")} driven {(mask ? driven.Count.ToString() : "all")} ik {(driver != null && driver.ikActive)} excluded [{string.Join(",", ikExcluded)}] applyRootMotion {animator.applyRootMotion}");
 		}
 
 		private static IEnumerable<AnimatorState> AllStates(AnimatorStateMachine machine)

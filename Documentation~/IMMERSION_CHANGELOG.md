@@ -3,6 +3,20 @@
 Fork-specific history (upstream's `CHANGELOG.md` is left untouched so upstream merges stay
 clean). Current layout and concern map: `IMMERSION.md`; lighting contract: `IMMERSION_lighting.md`.
 
+## 2026-10-14 — ClipParityReference: state parameters, additive layers, hips under the Root mask part
+
+Found on the 204 LuxMed controllers (`metaCoach_male`, `man_conflict_from_vr_no_hands`), which the ERT/Disney
+`DynamicAnimator` cases never exercised:
+- `Case.parameters` (`"talk=1;level=4"`, by the controller's parameter types): a state whose transitions leave on a
+  parameter condition (`talk IfNot`, `level NotEqual`) ended at its first frame, so the trace had no coverage.
+- `Case.additiveAsOverride`: an additive layer is traced as override through a non-persistent controller clone (the
+  asset is untouched), so the trace on the layer's masked bones is the clip itself — the gate checks the bake; the
+  additive composition is the runtime's and is not compared. Meta records `layerBlending` + `evaluatedAs` + `parameters`.
+- `BodyPart(Hips)` is `Root`, not `Body`: the hips carry the humanoid body transform, which a mask's Root part gates.
+  With Body on and Root off (204 `UpperBodyMask`) Unity leaves the hips to the layers below; the old mapping listed the
+  hips as driven and failed three correct bakes by 120-370 mm. No gated ERT/Disney state has such a mask (DynamicAnimator Body = `Mask_BodyNoHead`, Root on;
+  `Mask_Arms` / `Mask_Head` have no Body), so their results are unchanged.
+
 ## 2026-09-26 — LowerBodyTraceProbe (Lisa lower-body question) + IkHandFrameProbe.CaptureScene internal
 
 - `Diagnostics/LowerBodyTraceProbe.cs` (`-executeMethod Immersion.Export.LowerBodyTraceProbe.Run -scene <logic scene>
