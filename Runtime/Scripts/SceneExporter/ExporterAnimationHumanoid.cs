@@ -23,6 +23,10 @@ namespace UnityGLTF
 	public partial class GLTFSceneExporter
 	{
 #if ANIMATION_SUPPORTED
+		// IMMERSION: how far inside a looping clip's end its last key is sampled (s): far above float resolution at
+		// clip lengths of minutes (~1e-5 s at 60 s), far below a frame (204 A_Talk_Relaxed_2 moves < 0.05 mm over it).
+		private const float LoopEndSampleEpsilon = 1e-4f;
+
 		internal void CollectClipCurvesBySampling(GameObject root, AnimationClip clip, Dictionary<string, TargetCurveSet> targetCurves, bool? humanoidFootIK)
 		{
 			// IMMERSION: fork change — Foot IK is the playing state's (AnimatorState.iKOnFeet), passed down
@@ -129,7 +133,13 @@ namespace UnityGLTF
 #if UNITY_2020_2_OR_NEWER
 			foreach (var rig in rigs) rig.UpdatePreviewGraph(playableGraph);
 #endif
-			AnimationMode.SamplePlayableGraph(playableGraph, 0, time);
+			// IMMERSION: a LOOPING clip's playable wraps at t = length and returns frame 0, so the last key held
+			// the start pose and the web blended the final frame interval into it. Unity plays the curve's END up
+			// to the wrap and then jumps (204 A_Talk_Relaxed_2, not seamless: ~75 mm at the fingertips). Sample
+			// just inside the clip end; the key is still recorded at t = length. Seamless / loop-blended clips are
+			// unchanged (end == start).
+			var sampleTime = clip.isLooping ? Mathf.Max(length - LoopEndSampleEpsilon, (gridSamples - 1) * timeStep) : time;
+			AnimationMode.SamplePlayableGraph(playableGraph, 0, sampleTime);
 			recorder.UpdateRecording(time);
 
 #if UNITY_2020_2_OR_NEWER

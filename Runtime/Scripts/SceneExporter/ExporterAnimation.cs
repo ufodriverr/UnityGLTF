@@ -1572,10 +1572,16 @@ namespace UnityGLTF
 				interpolationType = InterpolationType.STEP;
 			
 			// Assuming all the curves exist now
-			for (var i = 0; i < nbSamples; ++i)
+			// IMMERSION: the grid has nbSamples INTERVALS = nbSamples + 1 keys (i * deltaTime, the last one = length).
+			// Upstream looped i < nbSamples and moved the last key to `length`, which dropped the key at
+			// (nbSamples - 1) * deltaTime: the final interval was two frames wide (204 A_Talk_Relaxed_2: the web
+			// interpolated 18.733 s → 18.767 s across a key Unity has).
+			// A zero-length clip keeps its single key.
+			var lastIndex = length > 0f ? nbSamples : 0;
+			for (var i = 0; i <= lastIndex; ++i)
 			{
 				var time = i * deltaTime;
-				if (i == nbSamples - 1) time = length;
+				if (i == lastIndex) time = length;
 
 				for (var k = 0; k < curveCount; k++)
 					while (keyframeIndex[k] < keyframes[k].Length - 1 && keyframes[k][keyframeIndex[k]].time < time)
@@ -1592,7 +1598,7 @@ namespace UnityGLTF
 				{
 					var lastTime = _times[_times.Count - 1];
 					var t0 = lastTime + 0.0001f;
-					if (i != nbSamples - 1)
+					if (i != lastIndex)
 						time += deltaTime * 0.999f;
 					_times.Add(t0 / speedMultiplier);
 					_times.Add(time / speedMultiplier);

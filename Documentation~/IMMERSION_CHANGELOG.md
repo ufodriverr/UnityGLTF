@@ -3,6 +3,20 @@
 Fork-specific history (upstream's `CHANGELOG.md` is left untouched so upstream merges stay
 clean). Current layout and concern map: `IMMERSION.md`; lighting contract: `IMMERSION_lighting.md`.
 
+## 2026-10-14 — Clip bake: the key before the clip end, and a looping clip's last key
+
+204 `A_Talk_Relaxed_2` (looping, not seamless: its end pose is ~75 mm / 10 deg from its start at the fingertips)
+failed the parity gate on its last 6 frames. Two bake errors, both fixed:
+- `BakePropertyAnimation` looped `i < nbSamples` and moved the last key to `length`, dropping the grid key at
+  `(nbSamples - 1) * deltaTime`, so every baked clip's final interval was two frames wide. It now writes
+  `nbSamples + 1` keys (the grid `BakeGrid` documents); a zero-length clip keeps one key.
+- `CollectClipCurvesBySampling` sampled a looping clip's playable at `t = length`, which wraps to frame 0, so the
+  last key held the START pose. It now samples `length - 1e-4 s` (key still at `length`): the curve end Unity
+  shows until the wrap. Seamless / loop-blended clips are unchanged.
+- Result: `A_Talk_Relaxed_2` key 0.030 mm / 0.028 deg, between 0.89 mm / 0.59 deg (was 0.37 mm / 52.8 mm, 7.3 deg).
+  Clips exported before this keep a two-frame last interval (they passed the between-key bound); a re-export
+  changes their sha256.
+
 ## 2026-10-14 — ClipParityReference: state parameters, additive layers, hips under the Root mask part
 
 Found on the 204 LuxMed controllers (`metaCoach_male`, `man_conflict_from_vr_no_hands`), which the ERT/Disney
